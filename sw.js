@@ -2,7 +2,7 @@
    Strategia: prima la rete con un tetto di 2,5 secondi, poi la copia locale.
    In una sala con connessione ballerina è la scelta giusta: non resti mai
    appeso ad attendere, ma quando c'è linea prendi la versione aggiornata. */
-var CACHE = "asta-live-8cec8657";
+var CACHE = "asta-live-56e7a029";
 var FILES = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", function (e) {
