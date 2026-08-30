@@ -538,11 +538,51 @@ function budgetSuggeriti() {
    vince 10 aste su 10, quello ricalcolato in corsa 7, con quasi un punto e
    mezzo di forza in più a giornata. Si ricalcola solo se cambi il regolamento
    o i prezzi di riferimento, e resta sempre modificabile a mano. */
+/* Il piano si fissa in PROPORZIONI, non in cifre assolute. Le proporzioni non
+   cambiano più una volta iniziata l'asta — è quella la decisione strategica, e
+   ricalcolarla in corsa la fa scivolare verso i reparti già chiusi. Ma i
+   crediti che avanzano da un reparto devono poter passare agli altri: se
+   chiudi la porta spendendo 12 invece di 64, quei 52 non possono restare
+   bloccati lì. Ogni render redistribuisco il residuo fra i reparti ancora
+   aperti, rispettando le proporzioni decise all'inizio. */
 function applicaBudget(forza) {
   if (!S.cfg.autoBudget) return;
-  if (!forza && Object.keys(S.market).length) return;
-  var b = budgetSuggeriti();
-  ROLES.forEach(function (rr) { S.budgets[rr.k] = b[rr.k]; });
+  var iniziata = Object.keys(S.market).length > 0;
+  if (forza || !iniziata || !S.plan) {
+    var b = budgetSuggeriti(), tot = 0;
+    ROLES.forEach(function (rr) { tot += b[rr.k]; });
+    S.plan = {};
+    ROLES.forEach(function (rr) {
+      S.plan[rr.k] = tot > 0 ? b[rr.k] / tot : 0.25; });
+  }
+  /* quanto ho speso e quanti slot mi mancano, reparto per reparto */
+  var speso = {}, presi = {}, totSpeso = 0;
+  ROLES.forEach(function (rr) { speso[rr.k] = 0; presi[rr.k] = 0; });
+  Object.keys(S.market).forEach(function (id) {
+    if (S.market[id].o !== "me") return;
+    var p = BY_ID[id];
+    if (!p || speso[p.r] === undefined) return;
+    speso[p.r] += S.market[id].p; presi[p.r]++; totSpeso += S.market[id].p;
+  });
+  /* L'avanzo di un reparto chiuso passa solo ai reparti NON ANCORA iniziati.
+     Darlo anche a quello in corso innesca una reazione a catena: lo spende
+     subito, e i reparti successivi restano a secco. Nelle simulazioni l'attacco
+     finiva con 6 crediti su 500 e la rosa perdeva tre punti a giornata.
+     Il reparto in corso tiene la cifra che aveva nel piano: è il suo limite. */
+  var pianoTot = {}, avanzo = 0, pesiFuturi = 0;
+  ROLES.forEach(function (rr) {
+    pianoTot[rr.k] = Math.round(S.plan[rr.k] * S.cfg.credits);
+    var mancano = S.cfg.sl[rr.k] - presi[rr.k];
+    if (mancano <= 0) avanzo += pianoTot[rr.k] - speso[rr.k];   // chiuso: libera il non speso
+    else if (presi[rr.k] === 0) pesiFuturi += S.plan[rr.k];     // non ancora iniziato
+  });
+  ROLES.forEach(function (rr) {
+    var mancano = S.cfg.sl[rr.k] - presi[rr.k];
+    if (mancano <= 0) { S.budgets[rr.k] = speso[rr.k]; return; }
+    var extra = (presi[rr.k] === 0 && pesiFuturi > 0)
+      ? Math.round(avanzo * S.plan[rr.k] / pesiFuturi) : 0;
+    S.budgets[rr.k] = Math.max(speso[rr.k], pianoTot[rr.k] + extra);
+  });
 }
 
 /* L'automatismo si regge su un vincolo semplice: il denaro della lega è fissato.
