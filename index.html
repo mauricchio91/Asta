@@ -75,6 +75,9 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 .it.gone{background:var(--sunk);color:var(--dim2);cursor:default}
 .it.gone .badge{background:var(--line2);color:var(--dim2)}
 .gonelbl{font-size:9.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--bad)}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:var(--sunk);border-radius:7px;padding:11px 12px;font-size:14px}
+.sw input{width:22px;height:22px;flex:0 0 auto;accent-color:var(--ok)}
 .cfg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
 .cfg label{display:flex;align-items:center;justify-content:space-between;gap:8px;
   background:var(--sunk);border-radius:7px;padding:8px 10px;font-size:13px;color:var(--dim)}
@@ -291,7 +294,7 @@ var LS = (function () {
 
 var S = { market: {}, targets: {}, riv: [],
           cfg: { teams: DEF.teams, credits: DEF.credits,
-                 sl: Object.assign({}, DEF.sl) },
+                 sl: Object.assign({}, DEF.sl), tcorr: 1 },
           budgets: Object.assign({}, DEF.bd) };
 function fillRiv() {
   while (S.riv.length < S.cfg.teams - 1) S.riv.push("Squadra " + (S.riv.length + 2));
@@ -307,7 +310,7 @@ function SCALE() { return S.cfg.credits / 1000; }
 var hist = [];
 try { var raw = LS.getItem(KEY); if (raw) { var o = JSON.parse(raw);
   S.market = o.market || {}; S.targets = o.targets || {};
-  if (o.cfg) S.cfg = o.cfg;
+  if (o.cfg) { S.cfg = o.cfg; if (S.cfg.tcorr === undefined) S.cfg.tcorr = 1; }
   if (o.budgets) S.budgets = o.budgets;
   if (o.riv) S.riv = o.riv;
   fillRiv(); } }
@@ -331,6 +334,15 @@ function exp2(f) { var b = f * SCALE();
 function alts(p) { return PLAYERS.filter(function (o) {
   return o.r === p.r && o.id !== p.id && !S.market[o.id] && !o.sold && o.f >= p.f * .75;
 }).length; }
+/* Il FVM considera solo in parte il rischio panchina: un 50% costa quasi come un
+   titolare. Correggo il tetto senza azzerarlo, per non pagare da titolare chi non lo è. */
+function titF(p) {
+  if (!S.cfg.tcorr) return 1;                // correzione disattivata dall'utente
+  if (!p.tit) return 1;                      // dato assente: non invento uno sconto
+  return Math.min(1, 0.55 + 0.45 * (p.tit / 95));
+}
+function capT(p) { return Math.max(1, Math.round(cap(p.f) * titF(p))); }
+
 /* S = slot mancanti / occasioni disponibili a quel livello */
 function urg(a, need) {
   if (need <= 0) return { k: 0, s: 0, l: "Reparto completo" };
@@ -408,6 +420,7 @@ window._a = {
   bud: function (k, v) { S.budgets[k] = parseInt(v) || 0; save(); R(); },
   gk: function (v) { gkPick = v; R(); },
   band: function (k) { openBand[k] = !openBand[k]; R(); },
+  tcorr: function (v) { S.cfg.tcorr = v ? 1 : 0; save(); R(); },
   cfg: function (k, v) {
     v = parseInt(v) || 0;
     if (k === "credits") {
@@ -523,7 +536,7 @@ function rows(d) {
       (p.sp ? ' <span class="sp">' + p.sp + "</span>" : "") +
       (S.targets[p.id] ? ' <span style="color:var(--key)">★</span>' : "") +
       '<br><span class="tit" style="color:' + titCol(p.tit) + '">' + titTxt(p) + "</span></span>" +
-      '<span class="val"><b>' + cap(p.f) + '</b><span class="cap">tetto</span></span>' +
+      '<span class="val"><b>' + capT(p) + '</b><span class="cap">tetto</span></span>' +
       (d.per[p.r].need <= 0 ? '<span class="cap" style="color:var(--dim2)">pieno</span>' : "") +
       "</button>"; }).join("") + (more > 60 ? foot : "");
 }
@@ -531,7 +544,9 @@ function rows(d) {
 function vDetail(d) {
   var p = BY_ID[selId], R2 = d.per[p.r];
   var a = alts(p), u = urg(a, R2.need);
-  var rec = Math.max(1, Math.min(Math.round(cap(p.f) * u.k), d.max));
+  var tf = titF(p);
+  var recFull = Math.max(1, Math.round(cap(p.f) * u.k));
+  var rec = Math.max(1, Math.min(Math.round(cap(p.f) * u.k * tf), d.max));
   var ex = exp2(p.f), open = Math.max(1, Math.round(rec * .85));
   var roleCap = Math.max(1, R2.left - Math.max(0, R2.need - 1));
 
@@ -573,9 +588,10 @@ function vDetail(d) {
   if (p.ntx) tags += '<p class="note" style="margin-top:7px">' + esc(p.ntx) + "</p>";
 
   var risk = "";
-  if (p.tit && p.tit < 50)
-    risk = '<p class="flag">Titolare solo nel ' + p.tit + "% delle partite previste: " +
-      "il tetto qui sopra vale se gioca. Trattalo come una scommessa, non come un titolare.</p>";
+  if (p.tit && p.tit < 75)
+    risk = '<p class="flag">Titolare nel ' + p.tit + "% delle partite previste: ho abbassato " +
+      "il tetto del " + Math.round((1 - tf) * 100) + "% (da " + recFull + " a " + rec +
+      " fm). Il FVM tiene conto solo in parte del rischio panchina.</p>";
   else if (!p.tit)
     risk = '<p class="flag">Nessun dato di titolarità: non era nella guida FantaLab. ' +
       "Verifica di persona che giochi.</p>";
@@ -635,6 +651,7 @@ function vRosa(d) {
       .join(", ") + ". Ogni punto vale circa 7,6 gol a stagione.</p>" +
       (d.mod.dup ? '<p class="flag">Tre o più di questi quattro giocano nella stessa squadra: ' +
         "se quella difesa prende gol crolli su tutti gli slot insieme.</p>" : "") +
+      modHint(d) +
       '<p class="tiny" style="margin-top:8px">Calcolata sulle medie voto attese di FantaLab ' +
       "e sulla tabella ufficiale del modificatore. Dove la proiezione manca (neopromosse, " +
       "nuovi arrivi) uso una stima dal ruolo Mantra.</p></div>";
@@ -667,6 +684,43 @@ function vRosa(d) {
   return h;
 }
 
+/* Cosa manca per salire di uno scalino: la domanda che il pannello non sapeva rispondere */
+function modHint(d) {
+  var m = d.mod, TH = [6, 6.25, 6.5, 6.75, 7];
+  var next = null;
+  for (var i = 0; i < TH.length; i++) if (m.av < TH[i]) { next = TH[i]; break; }
+  if (next === null)
+    return '<p class="note" style="margin-top:9px">Sei al massimo dello scalino: ' +
+      "il +5 richiede 7,00 di media e nessuno ci arriva.</p>";
+
+  var vals = [pmv(m.gk)].concat(m.ds.map(pmv));
+  var worst = Math.min.apply(null, m.ds.map(pmv));
+  var sum = vals.reduce(function (a, b) { return a + b; }, 0);
+  var needD = 4 * next - (sum - worst);          // MV che dovrebbe avere il sostituto
+  var needP = 4 * next - (sum - vals[0]);        // oppure un portiere migliore
+
+  function pool(role, mv) {
+    return PLAYERS.filter(function (p) {
+      return p.r === role && !S.market[p.id] && !p.sold && p.tit >= 75 && pmv(p) >= mv;
+    }).sort(function (a, b) { return capT(a) - capT(b); });
+  }
+  var cd = pool("D", needD), cp = pool("P", needP);
+  var lbl = next >= 7 ? "+5" : next >= 6.75 ? "+4" : next >= 6.5 ? "+3" : next >= 6.25 ? "+2" : "+1";
+
+  var h = '<p class="note" style="margin-top:9px">Per il <b>' + lbl + "</b> serve una media di " +
+    next.toFixed(2) + " (ti manca " + (next - m.av).toFixed(2) + "). ";
+  if (!cd.length && !cp.length)
+    return h + "Nessun portiere o difensore ancora libero basterebbe: questo scalino è chiuso.</p>";
+  if (cd.length)
+    h += "Sostituendo il tuo difensore più debole serve uno da <b>" + needD.toFixed(2) +
+      "</b> di media: il più economico libero è <b>" + esc(cd[0].n) + "</b> (" + cd[0].t +
+      ", " + capT(cd[0]) + " fm). ";
+  if (cp.length && needP <= 6.6)
+    h += "In alternativa un portiere da " + needP.toFixed(2) + ": " + esc(cp[0].n) +
+      " (" + capT(cp[0]) + " fm).";
+  return h + "</p>";
+}
+
 /* ------------------------------------------------------------- obiettivi */
 function vObb(d) {
   var h = '<p class="tiny" style="margin:0 0 12px">La lista che prepari prima dell\'asta. ' +
@@ -678,7 +732,7 @@ function vObb(d) {
       .sort(function (a, b) { return b.f - a.f; });
     if (!L.length) return;
     any = true;
-    var tot = L.reduce(function (a, p) { return a + cap(p.f); }, 0);
+    var tot = L.reduce(function (a, p) { return a + capT(p); }, 0);
     var over = tot > S.budgets[r.k];
     h += '<div class="card"><div class="rhead"><div class="lft">' +
       '<span class="badge b-' + r.k + '">' + r.k + '</span><h3 style=margin:0>' + r.l +
@@ -692,7 +746,7 @@ function vObb(d) {
         esc(p.n) + ' <span style="color:var(--dim2)">· ' + esc(p.t) + "</span>" +
         (p.sp ? ' <span class="sp">' + p.sp + "</span>" : "") +
         (p.tit ? ' <span class="mv" style="color:' + titCol(p.tit) + '">' + p.tit + "%</span>" : "") +
-        '</span><span class="p">' + cap(p.f) + "</span>" +
+        '</span><span class="p">' + capT(p) + "</span>" +
         (got ? "" : '<button class="x" onclick="_a.pick(\'' + p.id + '\')">›</button>') +
         '<button class="x" onclick="_a.star(\'' + p.id + '\')" aria-label="Togli">✕</button></div>';
     });
@@ -718,6 +772,16 @@ function vSet(d) {
     }).join("") + "</div>" +
     '<p class="tiny" style="margin-top:10px">Rosa da <b>' + SLOTS() + "</b> giocatori · " +
     "monte crediti della lega <b>" + (S.cfg.teams * S.cfg.credits) + "</b> fm</p></div>";
+
+  h += '<div class="card"><h3>Correzione per titolarità</h3>' +
+    '<label class="sw"><span>Abbassa il tetto di chi non è titolare fisso</span>' +
+    '<input type="checkbox"' + (S.cfg.tcorr ? " checked" : "") +
+    ' onchange="_a.tcorr(this.checked)"></label>' +
+    '<p class="tiny" style="margin-top:9px">Attiva: chi FantaLab dà al 50% vale il 21% in meno, ' +
+    "al 25% il 33% in meno. Chi è dato al 95% non viene toccato. La titolarità è una " +
+    "<b>proiezione stagionale</b> della guida, non un calcolo sulle giornate giocate finora.<br><br>" +
+    "Spegnila se preferisci fidarti solo del FVM del listone: i tetti tornano quelli pieni e " +
+    "la percentuale resta visibile accanto a ogni nome, per valutare caso per caso.</p></div>";
 
   h += '<div class="card"><h3>Backup dell\'asta</h3>' +
     '<p class="tiny" style="margin-bottom:10px">I dati vivono solo su questo dispositivo. ' +
@@ -786,7 +850,7 @@ function vLista(d) {
           return '<button onclick="_a.pick(\'' + p.id + '\')">' + esc(p.n) +
             (p.sp.indexOf("R") >= 0 ? '<span class="sp">R</span>' : "") +
             ' <span class="q" style="color:' + titCol(p.tit) + '">' + (p.tit || "?") + "%</span>" +
-            ' <span class="q">' + cap(p.f) + "</span></button>"; }).join(" · ") +
+            ' <span class="q">' + capT(p) + "</span></button>"; }).join(" · ") +
           (b[1].length > 14 && !openBand[r.k + b[0]]
             ? ' <button class="more" onclick="_a.band(\'' + r.k + b[0] + '\')">+' +
               (b[1].length - 14) + " altri</button>" : "")
@@ -846,7 +910,7 @@ function vGk(d) {
         var q = pairLbl(x[1]);
         return '<div class="pair"><span class="q" style="background:' + q[1] + '">' + x[1] + "</span>" +
           '<span class="g"><b>' + esc(x[0].n) + '</b><br><span class="lbl">' + esc(x[0].t) +
-          " · tetto " + cap(x[0].f) + " fm</span></span>" +
+          " · tetto " + capT(x[0]) + " fm</span></span>" +
           '<button class="other" style="padding:7px 11px;border-radius:7px;font-size:13px" ' +
           'onclick="_a.pick(\'' + x[0].id + '\')">Apri</button></div>'; }).join("") + "</div></div>";
   }
