@@ -23,7 +23,7 @@ html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--txt);font:400 16px/1.45 var(--sans);
   padding-bottom:calc(32px + env(safe-area-inset-bottom))}
 .wrap{max-width:860px;margin:0 auto;padding:0 12px}
-button,input{font-family:inherit;color:inherit}
+button,input,select,textarea,.it,.card{font-family:inherit;color:inherit;touch-action:manipulation}
 button{cursor:pointer;border:0;background:none}
 :focus-visible{outline:2px solid var(--key);outline-offset:2px}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
@@ -1288,37 +1288,37 @@ function vInfo() {
      "il tuo tetto, la rossa il massimo che puoi materialmente offrire. Il cursore è l'offerta " +
      "sul banco: finché resta a sinistra dell'azzurro stai comprando bene."],
     ["Da dove esce il tetto",
-     "Non dal FVM diviso due: quello era un errore. Il FVM è un massimo teorico, e nelle aste " +
+     "<b>Non dal FVM diviso due</b>: quello era un errore. Il FVM è un massimo teorico, e nelle aste " +
      "vere i campioni costano molto meno. Il prezzo base viene da una curva calibrata sui prezzi " +
      "realmente pagati in oltre 50.000 acquisti di questa stagione: Lautaro va in mediana a 84 " +
      "crediti su 500, non a 184. La scala si tara poi sulla tua lega, col prezzo del più caro " +
-     "che imposti nel Setup: la tua paga circa 1,7 volte la media nazionale sui campioni. " +
+     "che imposti nel Setup: la tua paga circa <b>1,7 volte la media nazionale</b> sui campioni. " +
      "Sopra questo agiscono l'indice di scarsità, la titolarità, gli infortuni e le regole."],
     ["Offerta massima",
-     "Devi completare 25 slot e tenere 1 credito per ognuno di quelli vuoti: crediti − (slot − 1). " +
+     "Devi completare 25 slot e tenere 1 credito per ognuno di quelli vuoti: <b>crediti − (slot − 1)</b>. " +
      "Vale anche per gli avversari: se sai quanti slot gli mancano, sai fin dove possono spingersi."],
     ["Indice di riserva",
-     "I tuoi crediti diviso la media avversaria, calcolata sugli acquisti che registri. Sopra 1,10 " +
-     "sei in vantaggio e puoi aggredire. Sotto 0,90 hai speso troppo presto: chiudi gli slot a " +
+     "I tuoi crediti diviso la media avversaria, calcolata sugli acquisti che registri. <b>Sopra 1,10</b> " +
+     "sei in vantaggio e puoi aggredire. <b>Sotto 0,90</b> hai speso troppo presto: chiudi gli slot a " +
      "1–5 crediti e non rincorrere."],
     ["Modificatore difesa",
-     "Media voto di portiere più i 3 migliori difensori. Ogni punto vale circa 7,6 gol a stagione: " +
-     "passare da +1 a +4 vale più di un attaccante da 20 gol. Servono centrali da voto alto per la " +
+     "Media voto di <b>portiere più i 3 migliori difensori</b>. Ogni punto vale circa 7,6 gol a stagione: " +
+     "passare da <b>+1 a +4</b> vale più di un attaccante da 20 gol. Servono centrali da voto alto per la " +
      "media e terzini da bonus in slot separati, su squadre diverse."],
     ["Titolarità",
      "La percentuale sotto ogni nome è la titolarità attesa secondo FantaLab. È il dato più " +
      "importante della scheda: un giocatore al 25% vale una frazione del suo FVM, perché il " +
-     "tetto presuppone che giochi. Verde sopra il 75%, rosso sotto il 50%."],
+     "tetto presuppone che giochi. <b>Verde sopra il 75%, rosso sotto il 50%</b>."],
     ["Rigoristi e piazzati",
      "Le sigle R, P e C accanto al nome segnalano rigorista, tiratore di punizioni e di calci " +
-     "d'angolo. Il rigore è il bonus a varianza più bassa che esista: a parità di FVM, il " +
+     "d'angolo. Il rigore è il bonus a <b>varianza più bassa</b> che esista: a parità di FVM, il " +
      "rigorista vale sempre più dell'altro."],
     ["Squadre rivali",
      "Quando registri un acquisto altrui puoi assegnarlo alla squadra che l'ha preso. La scheda " +
      "Rivali calcola per ognuna crediti residui, slot mancanti e offerta massima. Se un " +
      "avversario non può superare i 40 fm, sai che a 41 il giocatore è tuo."],
     ["Griglia portieri",
-     "Il numero ufficiale conta le giornate in cui i due portieri giocano in casa insieme: sprecate, " +
+     "Il numero ufficiale conta le <b>giornate sprecate</b>: quelle in cui i due portieri giocano in casa insieme, " +
      "perché ne schieri uno solo. Roma+Lazio, Inter+Milan e Torino+Juventus stanno a zero, perché " +
      "il calendario alterna le squadre della stessa città. All'opposto Napoli+Lazio arriva a 16."]
   ];
