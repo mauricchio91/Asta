@@ -403,10 +403,14 @@ var buyLock = false;   // impedisce che un doppio tocco registri due acquisti
    nella stessa sessione. Niente timer di scadenza: un intervallo periodico
    forzerebbe un render al secondo, il contrario di quanto ottimizzato prima. */
 var toasts = [], toastSeen = {};
+var TOAST_MAX = 3;
 function toastPush(key, title, body, tone) {
   if (toastSeen[key]) return;
   toastSeen[key] = true;
   toasts.push({ key: key, title: title, body: body, tone: tone || "" });
+  /* Sul telefono più di tre avvisi coprono l'interfaccia proprio quando serve
+     guardarla: tengo i più recenti, che sono anche i più attuali. */
+  while (toasts.length > TOAST_MAX) toasts.shift();
 }
 function toastsHTML() {
   if (!toasts.length) return "";
@@ -455,8 +459,9 @@ function checkAlerts(d) {
 
   d.riv.forEach(function (r) {
     if (r.slots <= 0 || r.credits > 15) return;
-    var bucket = Math.floor(r.credits / 5) * 5;
-    toastPush("poor:" + r.i + ":" + bucket, esc(r.name) + " è al verde",
+    /* una volta sola per rivale: usando fasce di crediti l'avviso si ripeteva
+       a ogni scalino e a fine asta se ne accumulavano decine sullo schermo */
+    toastPush("poor:" + r.i, esc(r.name) + " è al verde",
       "Le restano " + r.credits + " crediti per " + r.slots +
       " slot: non può più competere per un giocatore sopra quella cifra.", "warn");
   });
@@ -672,6 +677,21 @@ function injF(p) {
   return Math.max(0.3, 1 - (p.inj - 1) / 38);
 }
 function capT(p) { return Math.max(1, Math.round(cap(p.f, p) * titF(p) * injF(p))); }
+
+/* Il tetto che conta davvero: valore di mercato corretto per titolarità e
+   infortuni, moltiplicato per l'indice di scarsità, e poi limitato da quanto
+   resta nel reparto e da quanto puoi materialmente offrire. Prima l'elenco
+   mostrava il solo valore di mercato e la scheda questo: due numeri diversi
+   per lo stesso giocatore, con scarti fino al 31%. Ora è uno solo. */
+function tettoOp(p, d) {
+  d = d || calc();
+  var R = d.per[p.r];
+  if (!R || R.need <= 0) return capT(p);          // reparto pieno: resta il valore
+  var u = urg(alts(p), R.need);
+  var valore = Math.max(1, Math.round(cap(p.f, p) * u.k * titF(p) * injF(p)));
+  var quota = Math.max(1, R.left - Math.max(0, R.need - 1));
+  return Math.max(1, Math.min(valore, quota, d.max));
+}
 
 /* S = slot mancanti / occasioni disponibili a quel livello */
 function urg(a, need) {
@@ -1045,7 +1065,7 @@ function rows(d) {
       (p.inj >= 0 ? ' <span class="inj">' + (p.inj > 0 ? p.inj + "ª" : "?") + "</span>" : "") +
       (S.targets[p.id] ? ' <span style="color:var(--key)">★</span>' : "") +
       '<br><span class="tit" style="color:' + titCol(p.tit) + '">' + titTxt(p) + "</span></span>" +
-      '<span class="val"><b>' + capT(p) + '</b><span class="cap">tetto</span></span>' +
+      '<span class="val"><b>' + tettoOp(p, d) + '</b><span class="cap">tetto</span></span>' +
       (d.per[p.r].need <= 0 ? '<span class="cap" style="color:var(--dim2)">pieno</span>' : "") +
       "</button>"; }).join("") + (more > 60 ? foot : "");
 }
@@ -1061,7 +1081,7 @@ function vDetail(d) {
      nei primi reparti, è enorme e ti fa spendere metà budget in porta. */
   var quota = Math.max(1, R2.left - Math.max(0, R2.need - 1));
   var valore = Math.max(1, Math.round(cap(p.f, p) * u.k * tf * inf));
-  var rec = Math.max(1, Math.min(valore, quota, d.max));
+  var rec = tettoOp(p, d);   // stessa funzione dell'elenco: non possono divergere
   var frenato = valore > rec && rec === quota;
   var ex = exp2(p.f, p.r), open = Math.max(1, Math.round(rec * .85));
 
@@ -1295,7 +1315,7 @@ function vObb(d) {
       .sort(function (a, b) { return b.f - a.f; });
     if (!L.length) return;
     any = true;
-    var tot = L.reduce(function (a, p) { return a + capT(p); }, 0);
+    var tot = L.reduce(function (a, p) { return a + tettoOp(p, d); }, 0);
     var over = tot > S.budgets[r.k];
     h += '<div class="card"><div class="rhead"><div class="lft">' +
       '<span class="badge b-' + r.k + '">' + r.k + '</span><h3 style=margin:0>' + r.l +
@@ -1309,7 +1329,7 @@ function vObb(d) {
         esc(p.n) + ' <span style="color:var(--dim2)">· ' + esc(p.t) + "</span>" +
         (p.sp ? ' <span class="sp">' + p.sp + "</span>" : "") +
         (p.tit ? ' <span class="mv" style="color:' + titCol(p.tit) + '">' + p.tit + "%</span>" : "") +
-        '</span><span class="p">' + capT(p) + "</span>" +
+        '</span><span class="p">' + tettoOp(p, d) + "</span>" +
         (got ? "" : '<button class="x" onclick="_a.pick(\'' + p.id + '\')">›</button>') +
         '<button class="x" onclick="_a.star(\'' + p.id + '\')" aria-label="Togli">✕</button></div>';
     });
@@ -1507,7 +1527,7 @@ function vLista(d) {
           return '<button onclick="_a.pick(\'' + p.id + '\')">' + esc(p.n) +
             (p.sp.indexOf("R") >= 0 ? '<span class="sp">R</span>' : "") +
             ' <span class="q" style="color:' + titCol(p.tit) + '">' + (p.tit || "?") + "%</span>" +
-            ' <span class="q">' + capT(p) + "</span></button>"; }).join(" · ") +
+            ' <span class="q">' + tettoOp(p, d) + "</span></button>"; }).join(" · ") +
           (b[1].length > 14 && !openBand[r.k + b[0]]
             ? ' <button class="more" onclick="_a.band(\'' + r.k + b[0] + '\')">+' +
               (b[1].length - 14) + " altri</button>" : "")
@@ -1599,7 +1619,7 @@ function vGk(d) {
         var q = pairLbl(x[1]);
         return '<div class="pair"><span class="q" style="background:' + q[1] + '">' + x[1] + "</span>" +
           '<span class="g"><b>' + esc(x[0].n) + '</b><br><span class="lbl">' + esc(x[0].t) +
-          " · tetto " + capT(x[0]) + " fm</span></span>" +
+          " · tetto " + tettoOp(x[0], d) + " fm</span></span>" +
           '<button class="other" style="padding:7px 11px;border-radius:7px;font-size:13px" ' +
           'onclick="_a.pick(\'' + x[0].id + '\')">Apri</button></div>'; }).join("") + "</div></div>";
   }
