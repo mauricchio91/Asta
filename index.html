@@ -78,6 +78,19 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 .sw{display:flex;align-items:center;justify-content:space-between;gap:12px;
   background:var(--sunk);border-radius:7px;padding:11px 12px;font-size:14px}
 .sw input{width:22px;height:22px;flex:0 0 auto;accent-color:var(--ok)}
+.topbox{display:flex;align-items:center;gap:8px}
+.topbox button{flex:0 0 auto;width:64px;height:54px;border-radius:8px;background:var(--line);
+  font-size:17px;font-weight:700}
+.topbox button:active{background:var(--line2)}
+.topval{flex:1;text-align:center;background:var(--sunk);border-radius:8px;padding:7px 4px}
+.topval b{display:block;font-family:var(--mono);font-size:26px;font-weight:700;color:var(--key);line-height:1.1}
+.preset{display:flex;gap:6px;margin-top:8px}
+.preset button{flex:1;border:1px solid var(--line2);border-radius:7px;padding:8px 4px;
+  font-size:12px;font-weight:600;color:var(--dim);line-height:1.25}
+.preset button.on{border-color:var(--key);color:var(--key);background:rgba(124,196,216,.09)}
+.esempi{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px;text-align:center}
+.esempi div{background:var(--sunk);border-radius:7px;padding:8px 3px}
+.esempi b{display:block;font-family:var(--mono);font-size:19px;color:var(--txt);line-height:1.15}
 .cfg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
 .cfg label{display:flex;align-items:center;justify-content:space-between;gap:8px;
   background:var(--sunk);border-radius:7px;padding:8px 10px;font-size:13px;color:var(--dim)}
@@ -468,6 +481,8 @@ window._a = {
   band: function (k) { openBand[k] = !openBand[k]; R(); },
   tcorr: function (v) { S.cfg.tcorr = v ? 1 : 0; save(); R(); },
   rule: function (k, v) { S.cfg[k] = v ? 1 : 0; save(); R(); },
+  top: function (d) { S.cfg.top = Math.max(30, Math.min(400, S.cfg.top + d)); save(); R(); },
+  topSet: function (v) { S.cfg.top = v; save(); R(); },
   cfg: function (k, v) {
     v = parseInt(v) || 0;
     if (k === "credits") {
@@ -832,17 +847,32 @@ function vSet(d) {
     '<p class="tiny" style="margin-top:10px">Rosa da <b>' + SLOTS() + "</b> giocatori · " +
     "monte crediti della lega <b>" + (S.cfg.teams * S.cfg.credits) + "</b> fm</p></div>";
 
+  /* esempi che si aggiornano a ogni tocco: si vede subito l'effetto */
+  var esA = PLAYERS.find(function (x) { return x.n === "Malen"; });
+  var esB = PLAYERS.find(function (x) { return x.n === "Simeone"; });
+  var esC = PLAYERS.find(function (x) { return x.n === "Zortea"; });
   h += '<div class="card"><h3>Livello dei prezzi della tua lega</h3>' +
-    '<div class="cfg"><label>Il più caro va a<input type="number" min="30" max="400" value="' +
-    S.cfg.top + '" onchange="_a.cfg(\'top\',this.value)"></label></div>' +
-    '<p class="tiny" style="margin-top:9px">Quanto è stato pagato il giocatore più costoso ' +
-    "nelle aste della tua lega, su un budget da 500. È il numero che tara tutta la scala: " +
-    "alzandolo salgono i campioni e scendono i giocatori da pochi crediti, perché il budget " +
-    "è fisso e quello che spendi sopra lo togli sotto.<br><br>" +
-    "Riferimenti: <b>84</b> è la mediana nazionale misurata su 50.000 acquisti; <b>135</b> è " +
-    "quanto ha pagato la tua lega l'anno scorso, che concentra molto più della media. " +
-    'Ora è impostato su <b>' + S.cfg.top + "</b>: con questo valore Malen esce a " +
-    mkt(414) + " fm di mercato.</p></div>";
+    '<p class="tiny" style="margin-bottom:11px">Quanto è stato pagato il giocatore più costoso ' +
+    "nelle aste della tua lega, su budget 500. È il numero che tara tutta la scala.</p>" +
+    '<div class="topbox">' +
+      '<button onclick="_a.top(-10)">−10</button>' +
+      '<div class="topval"><b>' + S.cfg.top + '</b><span class="cap">crediti</span></div>' +
+      '<button onclick="_a.top(10)">+10</button>' +
+    "</div>" +
+    '<div class="preset">' +
+      '<button class="' + (S.cfg.top === 84 ? "on" : "") + '" onclick="_a.topSet(84)">84 · media nazionale</button>' +
+      '<button class="' + (S.cfg.top === 135 ? "on" : "") + '" onclick="_a.topSet(135)">135 · la tua lega</button>' +
+    "</div>" +
+    '<div class="esempi">' +
+      "<div><b>" + capT(esA) + '</b><span class="cap">' + esc(esA.n) + "</span></div>" +
+      "<div><b>" + capT(esB) + '</b><span class="cap">' + esc(esB.n) + "</span></div>" +
+      "<div><b>" + capT(esC) + '</b><span class="cap">' + esc(esC.n) + "</span></div>" +
+    "</div>" +
+    '<p class="tiny" style="margin-top:9px">I tre tetti qui sopra cambiano mentre premi: ' +
+    "alzando il valore salgono i campioni e <b>scendono</b> i giocatori da pochi crediti, " +
+    "perché i crediti sono fissi e quello che spendi sopra lo togli sotto. " +
+    "L'<b>84</b> è la mediana nazionale su 50.000 acquisti; il <b>135</b> è quanto ha pagato " +
+    "la tua lega l'anno scorso.</p></div>";
 
   h += '<div class="card"><h3>Regole che cambiano i valori</h3>' +
     '<label class="sw"><span>Modificatore di difesa attivo</span>' +
