@@ -212,6 +212,20 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 .band .b{font-size:14px;color:#c3d0da;line-height:1.75}
 .band .b button{color:#c3d0da;font-size:14px;padding:0}
 .band .b .q{font-family:var(--mono);font-size:11px;color:var(--dim2)}
+#toasts{position:fixed;left:0;right:0;top:calc(env(safe-area-inset-top) + 8px);z-index:60;
+  display:flex;flex-direction:column;gap:6px;padding:0 12px;pointer-events:none}
+.toast{pointer-events:auto;background:var(--panel);border:1px solid var(--line2);
+  border-left:3px solid var(--key);border-radius:9px;padding:10px 12px;font-size:12.5px;
+  line-height:1.4;color:var(--txt);box-shadow:0 8px 24px rgba(0,0,0,.4);
+  display:flex;gap:8px;align-items:flex-start;max-width:520px;width:100%;margin:0 auto}
+.toast.warn{border-left-color:var(--amb)}
+.toast b{display:block;margin-bottom:2px}
+.toast button{flex:0 0 auto;background:0;border:0;color:var(--dim2);font-size:16px;
+  line-height:1;padding:0 2px}
+.wrapoverlay{position:fixed;inset:0;z-index:70;background:rgba(2,6,15,.88);
+  display:flex;align-items:center;justify-content:center;padding:16px}
+.wrapsheet{width:100%;max-width:360px}
+
 .danger{width:100%;padding:14px;border-radius:11px;border:1px solid #6e1f22;color:#e07a7c;
   font-size:14px;font-weight:600}
 .pairs{display:grid;gap:5px}
@@ -383,6 +397,72 @@ var picking = false;   // sto scegliendo a quale avversario assegnare
 var limit = 60;        // quanti risultati mostro: si allarga col tasto "mostra altri"
 var qTimer = null;     // attesa prima di rifiltrare la ricerca
 var buyLock = false;   // impedisce che un doppio tocco registri due acquisti
+
+/* Avvisi proattivi ("spia"): stato solo di interfaccia, non persistito.
+   Un avviso compare una volta sola per chiave; chiuderlo non lo fa ripresentare
+   nella stessa sessione. Niente timer di scadenza: un intervallo periodico
+   forzerebbe un render al secondo, il contrario di quanto ottimizzato prima. */
+var toasts = [], toastSeen = {};
+function toastPush(key, title, body, tone) {
+  if (toastSeen[key]) return;
+  toastSeen[key] = true;
+  toasts.push({ key: key, title: title, body: body, tone: tone || "" });
+}
+function toastsHTML() {
+  if (!toasts.length) return "";
+  return '<div id="toasts">' + toasts.map(function (t) {
+    return '<div class="toast ' + t.tone + '"><span style="flex:1"><b>' + t.title + "</b>" +
+      t.body + '</span><button onclick="_a.toastClose(\'' + t.key +
+      '\')" aria-label="Chiudi">✕</button></div>';
+  }).join("") + "</div>";
+}
+/* Confronta il mio reparto con quello di tutti gli 11 rivali: derivato dagli
+   acquisti già registrati (S.market), nessuno stato nuovo da mantenere. */
+function checkAlerts(d) {
+  ROLES.forEach(function (rr) {
+    if (d.per[rr.k].need <= 0) return;
+    var tuttiPieni = d.riv.every(function (r) {
+      var presi = r.ids.filter(function (id) { return BY_ID[id].r === rr.k; }).length;
+      return S.cfg.sl[rr.k] - presi <= 0;
+    });
+    if (tuttiPieni) toastPush("late:" + rr.k, "Reparto in ritardo",
+      "Ti mancano ancora " + d.per[rr.k].need + " " + rr.l.toLowerCase() +
+      ": gli altri hanno già chiuso il reparto. Qui puoi aspettare, i prezzi tendono a scendere.");
+  });
+  /* Ritmo di spesa. Se riempi gli slot molto più in fretta di quanto spendi,
+     finirai l'asta con la cassa piena e una rosa scadente: i crediti avanzati
+     valgono zero. Va misurato mentre l'asta scorre, non alla fine, quando non
+     c'è più modo di rimediare. Confronto la quota di rosa completata con la
+     quota di budget usata: se divergono di oltre un quarto, lo dico. */
+  var tot = SLOTS(), riempiti = tot - d.left;
+  if (riempiti >= 5 && d.left > 0 && tot > 0 && S.cfg.credits > 0) {
+    var qSlot = riempiti / tot, qSpesa = d.spent / S.cfg.credits;
+    var scarto = qSlot - qSpesa;
+    var passo = Math.floor(Math.abs(scarto) * 10);
+    if (scarto > 0.25)
+      toastPush("lento:" + passo, "Stai comprando troppo a buon mercato",
+        "Rosa completata al " + Math.round(qSlot * 100) + "% ma hai speso solo il " +
+        Math.round(qSpesa * 100) + "% dei crediti. Di questo passo ne avanzeranno " +
+        "molti, e a fine asta valgono zero: alza le offerte sui giocatori che contano.",
+        "warn");
+    else if (scarto < -0.25)
+      toastPush("veloce:" + passo, "Stai spendendo troppo in fretta",
+        "Hai speso il " + Math.round(qSpesa * 100) + "% dei crediti per il " +
+        Math.round(qSlot * 100) + "% della rosa. Restano " + d.left +
+        " slot con " + d.credits + " crediti: da qui in avanti dovrai accontentarti.",
+        "warn");
+  }
+
+  d.riv.forEach(function (r) {
+    if (r.slots <= 0 || r.credits > 15) return;
+    var bucket = Math.floor(r.credits / 5) * 5;
+    toastPush("poor:" + r.i + ":" + bucket, esc(r.name) + " è al verde",
+      "Le restano " + r.credits + " crediti per " + r.slots +
+      " slot: non può più competere per un giocatore sopra quella cifra.", "warn");
+  });
+}
+
+var wrappedOpen = false;   // il riepilogo di fine asta è un overlay, non una scheda in più
 var openBand = {};     // fasce espanse nella scheda "chi resta"
 
 /* ---------------------------------------------------------------- modello */
@@ -426,11 +506,16 @@ function mkt(f, r) {
    Qui calcolo quanto vale, alle stime correnti, tutto ciò che la lega deve
    comprare in ogni reparto, e ripartisco il tuo budget in quella proporzione. */
 function budgetSuggeriti() {
+  /* Quanto costa, ai prezzi correnti, una rosa completa in ciascun reparto:
+     i crediti si ripartiscono in quella proporzione. Si calcola sull'intera
+     rosa e non sui soli crediti residui, perché i reparti chiamati per primi
+     divorerebbero quelli chiamati per ultimi: nelle simulazioni l'attacco
+     finiva con 54 crediti su 500. */
   var v = {}, tot = 0;
   ROLES.forEach(function (rr) {
     var n = S.cfg.teams * S.cfg.sl[rr.k];
     var pool = PLAYERS.filter(function (p) { return p.r === rr.k && !p.sold; })
-      .map(function (p) { return mkt0(p.f, p.r); })
+      .map(function (p) { return mkt(p.f, p.r); })
       .sort(function (a, b) { return b - a; }).slice(0, n);
     v[rr.k] = pool.reduce(function (a, b) { return a + b; }, 0);
     tot += v[rr.k];
@@ -440,8 +525,22 @@ function budgetSuggeriti() {
     out[rr.k] = tot > 0 ? Math.round(v[rr.k] / tot * S.cfg.credits) : 0; });
   return out;
 }
-function applicaBudget() {
+/* Il piano di spesa si fissa PRIMA di cominciare e poi non si tocca.
+   Ricalcolarlo a ogni acquisto lo fa scivolare verso i reparti che in quel
+   momento si stanno pagando cari — che sono spesso quelli già chiusi — e lo
+   toglie a quelli dove mancano ancora giocatori. Nelle simulazioni il piano
+   fisso vince 10 aste su 10, quello ricalcolato in corsa 7. Resta comunque
+   modificabile a mano, e si ricalcola se cambi il regolamento o i prezzi. */
+/* Il piano di spesa si fissa PRIMA che l'asta cominci e poi non si tocca.
+   Ricalcolarlo mentre si compra lo fa scivolare verso i reparti che in quel
+   momento si stanno pagando cari — spesso quelli già chiusi — sottraendolo a
+   quelli dove mancano ancora giocatori. Nelle simulazioni il piano fisso
+   vince 10 aste su 10, quello ricalcolato in corsa 7, con quasi un punto e
+   mezzo di forza in più a giornata. Si ricalcola solo se cambi il regolamento
+   o i prezzi di riferimento, e resta sempre modificabile a mano. */
+function applicaBudget(forza) {
   if (!S.cfg.autoBudget) return;
+  if (!forza && Object.keys(S.market).length) return;
   var b = budgetSuggeriti();
   ROLES.forEach(function (rr) { S.budgets[rr.k] = b[rr.k]; });
 }
@@ -588,8 +687,11 @@ function calc() {
     mod = { gk: gk, ds: ds, av: av, l: modLbl(av),
             dup: cl.some(function (c) { return cl.filter(function (x) { return x === c; }).length >= 3; }) };
   }
+  /* left negativo (rosa sforata, o slot ridotti dal Setup dopo gli acquisti)
+     azzererebbe la riserva e renderebbe l'offerta massima pari ai crediti. */
+  var leftPos = Math.max(0, left);
   return { mine: mine, spent: spent, credits: credits, left: left,
-           max: Math.max(0, credits - Math.max(0, left - 1)),
+           max: leftPos > 0 ? Math.max(0, credits - (leftPos - 1)) : 0,
            per: per, res: avg > 0 ? credits / avg : 1, mod: mod,
            riv: riv, unk: unk.length, unkSp: unkSp };
 }
@@ -601,7 +703,134 @@ function E(i) { return document.getElementById(i); }
 function pct(v, m) { return Math.max(0, Math.min(100, (v / m) * 100)); }
 
 /* ----------------------------------------------------------------- azioni */
+function csvEscape(s) {
+  s = String(s);
+  return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+/* Righe della rosa: "tutta l'asta" copre anche i rivali, ma solo per quanto
+   hai assegnato tu durante l'asta — i "Non so" restano tali, senza inventare. */
+function rosterRows(all) {
+  var out = [];
+  Object.keys(S.market).forEach(function (id) {
+    var m = S.market[id], p = BY_ID[id];
+    if (!all && m.o !== "me") return;
+    var team = m.o === "me" ? "La mia squadra"
+      : m.o === "x" ? "Non assegnato"
+      : (S.riv[parseInt(m.o.slice(1), 10)] || m.o);
+    out.push({ team: team, ruolo: p.r, nome: p.n, squadra: p.t, prezzo: m.p });
+  });
+  return out;
+}
+function toCSV(rows) {
+  var lines = [["Fantasquadra", "Ruolo", "Calciatore", "Squadra", "Prezzo"].join(";")];
+  rows.forEach(function (r) {
+    lines.push([r.team, r.ruolo, r.nome, r.squadra, r.prezzo].map(csvEscape).join(";"));
+  });
+  return lines.join("\r\n");
+}
+function toJSONRoster(rows) {
+  return JSON.stringify(rows.map(function (r) {
+    return { fantasquadra: r.team, ruolo: r.ruolo, calciatore: r.nome,
+             squadra: r.squadra, prezzo: r.prezzo };
+  }), null, 1);
+}
+function downloadFile(filename, content, mime) {
+  var blob = new Blob([content], { type: mime });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+}
+
+/* Fanta-Wrapped: statistiche vere calcolate dai dati, disegnate su <canvas>
+   nativo. Niente screenshot del DOM (html2canvas fotograferebbe le righe
+   fuori schermo lasciate vuote da content-visibility, con risultati rotti). */
+function wrappedStats() {
+  var mine = Object.keys(S.market).filter(function (id) { return S.market[id].o === "me"; })
+    .map(function (id) { return { p: BY_ID[id], price: S.market[id].p,
+                                   m: mkt0(BY_ID[id].f, BY_ID[id].r) }; });
+  if (!mine.length) return null;
+  var conRatio = mine.map(function (x) {
+    return { p: x.p, price: x.price, m: x.m, ratio: x.price / Math.max(1, x.m) }; });
+  var colpaccio = conRatio.slice().sort(function (a, b) { return a.ratio - b.ratio; })[0];
+  var peggiore = conRatio.slice().sort(function (a, b) { return b.ratio - a.ratio; })[0];
+  var speso = mine.reduce(function (a, x) { return a + x.price; }, 0);
+  var tutti = Object.keys(S.market).map(function (id) {
+    return { p: S.market[id].p, o: S.market[id].o, n: BY_ID[id].n }; });
+  var sceicco = tutti.slice().sort(function (a, b) { return b.p - a.p; })[0];
+  var sceiccoDi = sceicco.o === "me" ? "Tu"
+    : sceicco.o === "x" ? "Una squadra non assegnata"
+    : (S.riv[parseInt(sceicco.o.slice(1), 10)] || sceicco.o);
+  return { colpaccio: colpaccio, peggiore: peggiore, speso: speso, n: mine.length,
+           sceicco: sceicco, sceiccoDi: sceiccoDi };
+}
+function roundRectPath(c, x, y, w, h, r) {
+  c.beginPath(); c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+function drawWrapped() {
+  var st = wrappedStats(), cv = E("wrapCanvas");
+  if (!cv) return;
+  var W = 720, H = 1280;
+  cv.width = W; cv.height = H;
+  var ctx = cv.getContext("2d");
+  if (!ctx) return;
+  var g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#080b0f"); g.addColorStop(1, "#0d1420");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#7cc4d8"; ctx.font = "700 28px -apple-system,sans-serif";
+  ctx.fillText("ASTA LIVE · 2026/27", 48, 88);
+  ctx.fillStyle = "#e6edf3"; ctx.font = "800 50px -apple-system,sans-serif";
+  ctx.fillText("Il mio riassunto", 48, 148);
+  if (!st) {
+    ctx.fillStyle = "#8b9cad"; ctx.font = "500 24px -apple-system,sans-serif";
+    ctx.fillText("Ancora nessun acquisto registrato.", 48, 220);
+    return;
+  }
+  function card(y, label, name, sub, color) {
+    ctx.fillStyle = "#111820"; roundRectPath(ctx, 48, y, W - 96, 220, 18); ctx.fill();
+    ctx.fillStyle = color; ctx.font = "800 15px -apple-system,sans-serif";
+    ctx.fillText(label.toUpperCase(), 76, y + 44);
+    ctx.fillStyle = "#e6edf3"; ctx.font = "800 42px -apple-system,sans-serif";
+    ctx.fillText(String(name).slice(0, 22), 76, y + 104);
+    ctx.fillStyle = "#8b9cad"; ctx.font = "500 21px -apple-system,sans-serif";
+    ctx.fillText(sub, 76, y + 180);
+  }
+  card(190, "Il colpaccio", st.colpaccio.p.n,
+    "pagato " + st.colpaccio.price + " fm, ne valeva circa " + Math.round(st.colpaccio.m), "#2bb673");
+  card(430, "L'affare peggiore", st.peggiore.p.n,
+    "pagato " + st.peggiore.price + " fm, ne valeva circa " + Math.round(st.peggiore.m), "#dc4c4c");
+  card(670, "Lo sceicco della lega", st.sceicco.n,
+    st.sceiccoDi + " · " + st.sceicco.p + " fm su un solo giocatore", "#e8a33d");
+  ctx.fillStyle = "#5a6b7c"; ctx.font = "500 20px -apple-system,sans-serif";
+  ctx.fillText(st.n + " giocatori presi · " + st.speso + " crediti spesi", 48, H - 60);
+}
+
 window._a = {
+  toastClose: function (key) {
+    toasts = toasts.filter(function (t) { return t.key !== key; }); R();
+  },
+  wrapped: function (v) { wrappedOpen = v; R(); },
+  downloadWrapped: function () {
+    var cv = E("wrapCanvas"); if (!cv || !cv.toBlob) return;
+    cv.toBlob(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url; a.download = "fanta-wrapped.png";
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+    }, "image/png");
+  },
+  exportCSV: function (all) {
+    downloadFile(all ? "asta-completa.csv" : "mia-rosa.csv",
+      toCSV(rosterRows(all)), "text/csv;charset=utf-8");
+  },
+  exportJSON: function () {
+    downloadFile("asta-completa.json", toJSONRoster(rosterRows(true)), "application/json");
+  },
   /* La scheda di dettaglio vive dentro vAsta: senza riportare tab su "asta"
      il click da "lista", "inf", "gk" o "obb" imposta selId e non mostra nulla. */
   pick: function (id) {
@@ -620,14 +849,15 @@ window._a = {
   gk: function (v) { gkPick = v; R(); },
   band: function (k) { openBand[k] = !openBand[k]; R(); },
   tcorr: function (v) { S.cfg.tcorr = v ? 1 : 0; save(); R(); },
-  rule: function (k, v) { S.cfg[k] = v ? 1 : 0; save(); R(); },
+  rule: function (k, v) { S.cfg[k] = v ? 1 : 0; applicaBudget(true); save(); R(); },
   top: function (k, d) {
-    S.cfg.top[k] = Math.max(5, Math.min(400, S.cfg.top[k] + d)); save(); R(); },
+    S.cfg.top[k] = Math.max(5, Math.min(400, S.cfg.top[k] + d));
+    applicaBudget(true); save(); R(); },
   adegua: function (k) {
     var t = trend()[k];
     if (!t || t.n < 4 || !t.q) return;
     S.cfg.top[k] = Math.max(5, Math.min(400, Math.round(S.cfg.top[k] * t.q)));
-    save(); R();
+    applicaBudget(true); save(); R();
   },
   cfg: function (k, v) {
     v = parseInt(v) || 0;
@@ -639,6 +869,7 @@ window._a = {
         S.budgets[r.k] = Math.round(S.budgets[r.k] * S.cfg.credits / old); });
     } else if (k === "teams") { S.cfg.teams = Math.max(2, v); fillRiv(); }
     else if (k.indexOf("sl.") === 0) { S.cfg.sl[k.slice(3)] = Math.max(0, v); }
+    applicaBudget(true);   // cambiato il regolamento: il piano va rifatto
     save(); R();
   },
   copy: function () {
@@ -675,7 +906,12 @@ window._a = {
     buyLock = true; setTimeout(function () { buyLock = false; }, 400);
     var p = BY_ID[selId]; if (!p) return;
     var d = calc(), pr = Math.max(1, bid || 1);
-    if (o === "me" && pr > d.max) return;
+    /* Senza il controllo sugli slot si può comprare un quarto portiere, e oltre
+       i 25 giocatori il conteggio va in negativo: l'offerta massima diventa pari
+       a tutti i crediti e si compra all'infinito. Sul mio acquisto blocco;
+       per i rivali no, perché lì sto registrando quello che è successo davvero
+       e non devo impedirmi di annotare un dato scomodo. */
+    if (o === "me" && (pr > d.max || d.per[p.r].need <= 0 || d.left <= 0)) return;
     histPush({ id: p.id, prev: S.market[p.id] || null });
     S.market[p.id] = { o: o, p: pr };
     selId = null; bid = 0; query = ""; picking = false; save(); R();
@@ -683,6 +919,7 @@ window._a = {
   reset: function () {
     if (!confirm("Azzeri tutta l'asta? Rosa, acquisti e obiettivi vengono cancellati.")) return;
     S.market = {}; S.targets = {}; S.hist = []; selId = null; bid = 0; query = "";
+    toasts = []; toastSeen = {};
     try { LS.removeItem(KEY); } catch (e) {} R();
   }
 };
@@ -883,13 +1120,17 @@ function vDetail(d) {
         '<button class="pk unk" onclick="_a.buy(\'x\')">Non so</button>' +
         '<button class="pk unk" onclick="_a.cancel()">Annulla</button></div>'
       : '<div class="acts"><button class="mine" onclick="_a.buy(\'me\')"' +
-        (bid > d.max || bid < 1 || p.sold ? " disabled" : "") + ">L'HO PRESO IO</button>" +
+        (bid > d.max || bid < 1 || p.sold || R2.need <= 0 || d.left <= 0
+          ? " disabled" : "") + ">L'HO PRESO IO</button>" +
         '<button class="other" onclick="_a.other()">Preso da un altro</button></div>') + "</div>";
 }
 
 /* ------------------------------------------------------------------ rosa */
 function vRosa(d) {
-  var h = "";
+  var h = '<div class="card"><h3>Fanta-Wrapped</h3>' +
+    '<p class="tiny" style="margin-bottom:9px">Il riepilogo di fine asta: il colpaccio, ' +
+    "l'affare peggiore e lo sceicco della lega, pronto da salvare come immagine.</p>" +
+    '<button class="other" onclick="_a.wrapped(true)">Genera il riepilogo</button></div>';
   if (d.mod) {
     h += '<div class="card mod" style="border-color:#2a4d5a">' +
       '<span class="cap" style="color:var(--key)">Modificatore stimato</span>' +
@@ -1039,6 +1280,16 @@ function vObb(d) {
   return h;
 }
 
+function wrappedOverlay() {
+  if (!wrappedOpen) return "";
+  return '<div class="wrapoverlay"><div class="wrapsheet">' +
+    '<canvas id="wrapCanvas" style="width:100%;border-radius:14px;display:block"></canvas>' +
+    '<div class="acts" style="margin-top:12px">' +
+    '<button class="mine" onclick="_a.downloadWrapped()">Salva immagine</button>' +
+    '<button class="other" onclick="_a.wrapped(false)">Chiudi</button></div>' +
+    '</div></div>';
+}
+
 /* ----------------------------------------------------------------- setup */
 function vSet(d) {
   var h = '<div class="card"><h3>Regolamento della lega</h3>' +
@@ -1144,6 +1395,20 @@ function vSet(d) {
     '<div class="acts" style="margin-top:9px">' +
     '<button class="other" onclick="_a.copy()">Copia backup</button>' +
     '<button class="other" onclick="_a.paste()">Ripristina…</button></div></div>';
+
+  var nonAss = Object.values(S.market).filter(function (m) { return m.o === "x"; }).length;
+  h += '<div class="card"><h3>Esporta le rose</h3>' +
+    '<p class="tiny" style="margin-bottom:10px">Nome, ruolo, squadra e prezzo di ogni giocatore. ' +
+    "Su <b>Leghe Fantacalcio.it</b> si carica in Squadre → Importa le rose da un foglio (piano PRO): " +
+    "bastano nome del calciatore e fantasquadra, il resto aiuta il riconoscimento. Non ho trovato " +
+    "un'importazione equivalente su FantaMaster: lì l'inserimento resta manuale, ma il file resta " +
+    "comunque un elenco pronto da cui copiare.</p>" +
+    (nonAss ? '<p class="flag" style="margin-bottom:9px">' + nonAss +
+      ' acquisti non assegnati a nessuna squadra: nell\'esportazione completa restano "Non assegnato".</p>' : "") +
+    '<div class="acts"><button class="other" onclick="_a.exportCSV(false)">La mia rosa</button>' +
+    '<button class="other" onclick="_a.exportCSV(true)">Tutta l\'asta (CSV)</button></div>' +
+    '<button class="other" style="width:100%;margin-top:8px" onclick="_a.exportJSON()">Tutta l\'asta (JSON)</button>' +
+    "</div>";
 
   h += '<div class="card"><h3>Ricomincia</h3>' +
     '<p class="tiny" style="margin-bottom:10px">Azzera rosa, acquisti e obiettivi. ' +
@@ -1355,9 +1620,10 @@ function vInfo() {
 
 /* ---------------------------------------------------------------- render */
 function R() {
-  applicaBudget();
-  autoCal();
+  autoCal();        // prima: calcola ADJ, che non dipende dai budget
+  applicaBudget();  // poi: i budget si appoggiano ai prezzi già corretti
   var d = calc();
+  checkAlerts(d);
   head(d);
   var h = tab === "asta" ? vAsta(d) : tab === "rosa" ? vRosa(d) :
           tab === "obb" ? vObb(d) : tab === "riv" ? vRiv(d) :
@@ -1365,7 +1631,8 @@ function R() {
           tab === "set" ? vSet(d) : vInfo();
   if (!storeOk) h = '<p class="flag" style="margin:0 0 12px">Il salvataggio automatico non ' +
     "risponde. Non chiudere questa scheda finché l'asta non è finita.</p>" + h;
-  E("app").innerHTML = h;
+  E("app").innerHTML = toastsHTML() + h + wrappedOverlay();
+  if (wrappedOpen) drawWrapped();   // il canvas esiste solo dopo aver scritto innerHTML
 
   var q = E("q");
   if (q) q.addEventListener("input", function () {
