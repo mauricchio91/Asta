@@ -2,12 +2,25 @@
    Strategia: prima la rete con un tetto di 2,5 secondi, poi la copia locale.
    In una sala con connessione ballerina è la scelta giusta: non resti mai
    appeso ad attendere, ma quando c'è linea prendi la versione aggiornata. */
-var CACHE = "asta-live-d470e261";
+var CACHE = "asta-live-2171d5cb";
 var FILES = ["./", "./index.html", "./manifest.webmanifest"];
+
+/* caches.addAll è atomica: se anche un solo file risponde 404 l'intera Promise
+   viene respinta, install fallisce, activate non parte e in cache non finisce
+   niente. Il guasto è silenzioso, perché online la pagina si apre lo stesso e
+   te ne accorgi solo quando resti senza rete. Metto quindi in cache i file uno
+   a uno: index.html è indispensabile e se manca quello è giusto fallire, il
+   manifest è un di più e la sua assenza non deve costare l'uso offline. */
+var ESSENZIALI = ["./index.html"];
 
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) {
-    return c.addAll(FILES);
+    return Promise.all(FILES.map(function (f) {
+      return c.add(f).catch(function (err) {
+        if (ESSENZIALI.indexOf(f) >= 0) throw err;
+        return null;   // file accessorio mancante: si prosegue
+      });
+    }));
   }).then(function () { return self.skipWaiting(); }));
 });
 

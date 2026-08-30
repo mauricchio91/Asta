@@ -331,6 +331,7 @@ var S = { market: {}, targets: {}, riv: [],
                  sl: Object.assign({}, DEF.sl), tcorr: 1,
                  top: { P: 76, D: 50, C: 98, A: 139 },  // il più pagato per reparto
                  auto: 1,       // ritara i tetti da solo mentre l'asta va avanti
+                 autoBudget: 1, // budget di reparto derivati dalla calibrazione
                  moddif: 1,     // modificatore difesa attivo
                  assist: 1 },   // gli assist danno bonus
           budgets: Object.assign({}, DEF.bd) };
@@ -353,7 +354,8 @@ try { var raw = LS.getItem(KEY); if (raw) { var o = JSON.parse(raw);
       S.cfg.top = { P: 76, D: 50, C: 98, A: 139 };
     if (S.cfg.moddif === undefined) S.cfg.moddif = 1;
     if (S.cfg.assist === undefined) S.cfg.assist = 1;
-    if (S.cfg.auto === undefined) S.cfg.auto = 1; }
+    if (S.cfg.auto === undefined) S.cfg.auto = 1;
+    if (S.cfg.autoBudget === undefined) S.cfg.autoBudget = 1; }
   if (o.budgets) S.budgets = o.budgets;
   if (o.riv) S.riv = o.riv;
   fillRiv(); } }
@@ -400,6 +402,32 @@ var ADJ = { P: 1, D: 1, C: 1, A: 1 }, ADJinfo = null;
 function mkt(f, r) {
   if (!FMAX[r]) r = "A";
   return Math.max(1, Math.round(mkt0(f, r) * (ADJ[r] || 1)));
+}
+
+/* I budget di reparto devono discendere dagli stessi prezzi con cui valuto i
+   giocatori, altrimenti si contraddicono: con 35 crediti in porta e portieri che
+   nella tua lega ne costano 76, il conto non torna e finisci per sfondare.
+   Qui calcolo quanto vale, alle stime correnti, tutto ciò che la lega deve
+   comprare in ogni reparto, e ripartisco il tuo budget in quella proporzione. */
+function budgetSuggeriti() {
+  var v = {}, tot = 0;
+  ROLES.forEach(function (rr) {
+    var n = S.cfg.teams * S.cfg.sl[rr.k];
+    var pool = PLAYERS.filter(function (p) { return p.r === rr.k && !p.sold; })
+      .map(function (p) { return mkt0(p.f, p.r); })
+      .sort(function (a, b) { return b - a; }).slice(0, n);
+    v[rr.k] = pool.reduce(function (a, b) { return a + b; }, 0);
+    tot += v[rr.k];
+  });
+  var out = {};
+  ROLES.forEach(function (rr) {
+    out[rr.k] = tot > 0 ? Math.round(v[rr.k] / tot * S.cfg.credits) : 0; });
+  return out;
+}
+function applicaBudget() {
+  if (!S.cfg.autoBudget) return;
+  var b = budgetSuggeriti();
+  ROLES.forEach(function (rr) { S.budgets[rr.k] = b[rr.k]; });
 }
 
 /* L'automatismo si regge su un vincolo semplice: il denaro della lega è fissato.
@@ -463,8 +491,11 @@ function ruleF(p) {
   return k;
 }
 /* Il tetto sta un filo sopra la mediana di mercato: oltre stai pagando caro. */
+/* Il secondo parametro non è opzionale: senza di esso il ruolo verrebbe scelto
+   d'arbitrio e il prezzo sarebbe di un altro reparto. Meglio accorgersene subito. */
 function cap(f, p) {
-  return Math.max(1, Math.round(mkt(f, p ? p.r : "A") * 1.15 * (p ? ruleF(p) : 1)));
+  if (!p || !p.r) throw new Error("cap(): manca il giocatore, il ruolo serve al prezzo");
+  return Math.max(1, Math.round(mkt(f, p.r) * 1.15 * ruleF(p)));
 }
 function exp2(f, r) { var m = mkt(f, r || "A");
   return [Math.max(1, Math.round(m * 0.85)), Math.max(2, Math.round(m * 1.15))]; }
@@ -555,13 +586,21 @@ function pct(v, m) { return Math.max(0, Math.min(100, (v / m) * 100)); }
 
 /* ----------------------------------------------------------------- azioni */
 window._a = {
-  pick: function (id) { selId = id; bid = exp2(BY_ID[id].f, BY_ID[id].r)[0]; picking = false; R(); },
+  /* La scheda di dettaglio vive dentro vAsta: senza riportare tab su "asta"
+     il click da "lista", "inf", "gk" o "obb" imposta selId e non mostra nulla. */
+  pick: function (id) {
+    selId = id; bid = exp2(BY_ID[id].f, BY_ID[id].r)[0];
+    picking = false; tab = "asta"; R();
+  },
   tab: function (t) { tab = t; selId = null; picking = false; R(); },
   rf: function (k) { rf = k; limit = 60; R(); },
   more: function () { limit += 60; E("res").innerHTML = rows(calc()); },
   bid: function (n) { bid = Math.max(1, bid + n); R(); },
   star: function (id) { if (S.targets[id]) delete S.targets[id]; else S.targets[id] = 1; save(); R(); },
-  bud: function (k, v) { S.budgets[k] = parseInt(v) || 0; save(); R(); },
+  /* Toccare un budget a mano significa volerlo diverso da quello derivato:
+     senza spegnere autoBudget, applicaBudget() lo riscrive al render successivo. */
+  bud: function (k, v) {
+    S.budgets[k] = parseInt(v) || 0; S.cfg.autoBudget = 0; save(); R(); },
   gk: function (v) { gkPick = v; R(); },
   band: function (k) { openBand[k] = !openBand[k]; R(); },
   tcorr: function (v) { S.cfg.tcorr = v ? 1 : 0; save(); R(); },
@@ -719,9 +758,14 @@ function vDetail(d) {
   var tf = titF(p);
   var recFull = Math.max(1, Math.round(cap(p.f, p) * u.k));
   var inf = injF(p);
-  var rec = Math.max(1, Math.min(Math.round(cap(p.f, p) * u.k * tf * inf), d.max));
+  /* Quanto resta davvero per questo slot: il budget del reparto meno un credito
+     per ogni slot che dovrai ancora riempire. Senza questo vincolo il tetto,
+     nei primi reparti, è enorme e ti fa spendere metà budget in porta. */
+  var quota = Math.max(1, R2.left - Math.max(0, R2.need - 1));
+  var valore = Math.max(1, Math.round(cap(p.f, p) * u.k * tf * inf));
+  var rec = Math.max(1, Math.min(valore, quota, d.max));
+  var frenato = valore > rec && rec === quota;
   var ex = exp2(p.f, p.r), open = Math.max(1, Math.round(rec * .85));
-  var roleCap = Math.max(1, R2.left - Math.max(0, R2.need - 1));
 
   var v;
   if (R2.need <= 0) v = ["REPARTO PIENO", "Hai già tutti gli slot di questo ruolo", "v-off", ""];
@@ -799,7 +843,10 @@ function vDetail(d) {
     '<div class="notes"><div class="note"><b>' + u.l + "</b> · indice " + u.s.toFixed(2) +
     " · restano <b>" + a + "</b> giocatori pari o migliori, ti servono <b>" + R2.need + "</b> slot</div>" +
     '<div class="note">Budget ' + R2.r.l.toLowerCase() + ": <b>" + R2.left + "</b> fm liberi" +
-    (rec > roleCap ? ' · <span style="color:var(--warn)">sfori il reparto</span>' : "") + "</div>" +
+    (frenato
+      ? ' · <span style="color:var(--warn)">vale ' + valore +
+        " ma il reparto ne lascia " + quota + "</span>"
+      : "") + "</div>" +
     gkNote + "</div></div>" +
   '<div class="verdict ' + v[2] + '"><b>' + v[0] + "</b><span>" + v[1] + "</span></div>" +
   '<div class="bidbox"><span class="cap" style="display:block;margin-bottom:8px">Offerta sul banco</span>' +
@@ -1167,7 +1214,7 @@ function vInf(d) {
       "</span></div>" +
       '<span class="inj">' + (p.inj > 0 ? p.inj + "ª giornata" : "data ignota") + "</span></div>" +
       '<p class="tiny">' + esc(p.injx) + "</p>" +
-      '<p class="tiny" style="margin-top:4px">Tetto pieno ' + cap(p.f) + " fm → corretto <b>" +
+      '<p class="tiny" style="margin-top:4px">Tetto pieno ' + cap(p.f, p) + " fm → corretto <b>" +
       capT(p) + '</b> fm · <button class="more" onclick="_a.pick(\'' + p.id +
       '\')">apri</button></p></div>';
   });
@@ -1287,6 +1334,7 @@ function vInfo() {
 
 /* ---------------------------------------------------------------- render */
 function R() {
+  applicaBudget();
   autoCal();
   var d = calc();
   head(d);
