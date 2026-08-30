@@ -78,6 +78,23 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 .sw{display:flex;align-items:center;justify-content:space-between;gap:12px;
   background:var(--sunk);border-radius:7px;padding:11px 12px;font-size:14px}
 .sw input{width:22px;height:22px;flex:0 0 auto;accent-color:var(--ok)}
+.trend{display:flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line2);
+  border-radius:9px;padding:9px 12px;margin-bottom:10px;font-size:12.5px;color:var(--dim)}
+.trend b{color:var(--txt)}
+.dotq{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+.autobox{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:9px;text-align:center}
+.autobox div{background:var(--sunk);border-radius:7px;padding:8px 3px}
+.autobox b{display:block;font-family:var(--mono);font-size:17px;line-height:1.15}
+.trend{align-items:flex-start;line-height:1.5}
+.calib{background:var(--sunk);border-radius:9px;padding:10px;margin-bottom:8px}
+.crow{display:flex;align-items:center;gap:7px}
+.cname{flex:1;font-size:14px;font-weight:600}
+.crow button{width:44px;height:38px;border-radius:7px;background:var(--line);font-size:14px;font-weight:700}
+.crow button:active{background:var(--line2)}
+.cval{width:52px;text-align:center;font-family:var(--mono);font-size:20px;font-weight:700;color:var(--key)}
+.cprev{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:12px;color:var(--dim2)}
+.cprev b{font-family:var(--mono);color:var(--txt);font-size:13px}
+.ctrend{margin-top:7px;padding-top:7px;border-top:1px solid var(--line);font-size:12px;color:var(--dim2)}
 .topbox{display:flex;align-items:center;gap:8px}
 .topbox button{flex:0 0 auto;width:64px;height:54px;border-radius:8px;background:var(--line);
   font-size:17px;font-weight:700}
@@ -312,7 +329,8 @@ var LS = (function () {
 var S = { market: {}, targets: {}, riv: [],
           cfg: { teams: DEF.teams, credits: DEF.credits,
                  sl: Object.assign({}, DEF.sl), tcorr: 1,
-                 top: 135,      // quanto va il più caro nella tua lega
+                 top: { P: 76, D: 50, C: 98, A: 139 },  // il più pagato per reparto
+                 auto: 1,       // ritara i tetti da solo mentre l'asta va avanti
                  moddif: 1,     // modificatore difesa attivo
                  assist: 1 },   // gli assist danno bonus
           budgets: Object.assign({}, DEF.bd) };
@@ -331,9 +349,11 @@ try { var raw = LS.getItem(KEY); if (raw) { var o = JSON.parse(raw);
   S.market = o.market || {}; S.targets = o.targets || {};
   if (o.cfg) { S.cfg = o.cfg;
     if (S.cfg.tcorr === undefined) S.cfg.tcorr = 1;
-    if (S.cfg.top === undefined) S.cfg.top = 135;
+    if (typeof S.cfg.top !== "object" || !S.cfg.top)
+      S.cfg.top = { P: 76, D: 50, C: 98, A: 139 };
     if (S.cfg.moddif === undefined) S.cfg.moddif = 1;
-    if (S.cfg.assist === undefined) S.cfg.assist = 1; }
+    if (S.cfg.assist === undefined) S.cfg.assist = 1;
+    if (S.cfg.auto === undefined) S.cfg.auto = 1; }
   if (o.budgets) S.budgets = o.budgets;
   if (o.riv) S.riv = o.riv;
   fillRiv(); } }
@@ -353,35 +373,100 @@ var openBand = {};     // fasce espanse nella scheda "chi resta"
    Il FVM non è un prezzo: è un tetto teorico, e i top costano molto meno
    del loro FVM perché il budget non basta. Il rapporto prezzo/FVM scende
    al crescere del FVM, da circa 1,0 sui giocatori da 1 credito a 0,20 su Malen. */
-var FMAX = 414;   // il FVM più alto del listone
-/* Inclinazione della curva: quanto la lega concentra la spesa sui campioni.
-   Si ricava dal prezzo del più caro, che tu imposti nel Setup. Alzandolo
-   salgono i top e scendono i giocatori da pochi crediti: il budget è fisso. */
-function tilt() {
-  var base = 1.1038 - 0.15 * Math.log(FMAX);
-  return (S.cfg.top / FMAX - base) / (Math.log(FMAX) - Math.log(60));
+/* Il FVM più alto di ciascun reparto: è l'ancora superiore della curva. */
+var FMAX = {};
+["P", "D", "C", "A"].forEach(function (r) {
+  FMAX[r] = PLAYERS.reduce(function (m, p) {
+    return p.r === r && !p.sold && p.f > m ? p.f : m; }, 1);
+});
+
+/* Prezzo di mercato per reparto. Curva a legge di potenza ancorata in due punti:
+   il giocatore col FVM più alto del reparto costa quanto hai pagato il più caro
+   nella tua lega, e un FVM 1 costa 1 credito. L'esponente esce da soli quei due
+   vincoli, quindi ogni reparto ha la sua pendenza: la tua lega paga i portieri
+   2,7 volte il riferimento nazionale e gli attaccanti 1,7, e con un parametro
+   unico quello squilibrio andrebbe perso. */
+function mkt0(f, r) {
+  if (f <= 0) return 1;
+  if (!FMAX[r]) r = "A";                 // guardia: senza ruolo valido nessun numero inventato
+  var T = (S.cfg.top && S.cfg.top[r]) || 100, M = FMAX[r] || 100;
+  if (M <= 1 || T <= 1) return 1;
+  var b = Math.log(T) / Math.log(M);
+  return T * Math.pow(f / M, b) * (S.cfg.credits / 500);
 }
-/* Le regole della lega spostano il valore di alcuni ruoli. */
+/* Correzione automatica, ricalcolata a ogni acquisto registrato. Vive qui e non
+   dentro mkt0 per non avere ricorsione: la aggiorna autoCal() a ogni render. */
+var ADJ = { P: 1, D: 1, C: 1, A: 1 }, ADJinfo = null;
+function mkt(f, r) {
+  if (!FMAX[r]) r = "A";
+  return Math.max(1, Math.round(mkt0(f, r) * (ADJ[r] || 1)));
+}
+
+/* L'automatismo si regge su un vincolo semplice: il denaro della lega è fissato.
+   Sono squadre x crediti, punto. Quindi se sui portieri si è speso più del previsto,
+   per i reparti ancora da chiamare resta meno, e i tetti là devono SCENDERE.
+   Un automatismo che si limitasse a rincorrere i prezzi al rialzo farebbe il
+   contrario di quello che serve: inseguirebbe il mercato invece di proteggerti. */
+function autoCal() {
+  ADJ = { P: 1, D: 1, C: 1, A: 1 }; ADJinfo = null;
+  if (!S.cfg.auto) return;
+
+  var ids = Object.keys(S.market);
+  if (!ids.length) return;
+
+  var totale = S.cfg.teams * S.cfg.credits, speso = 0;
+  var venduti = { P: 0, D: 0, C: 0, A: 0 }, oss = { P: [], D: [], C: [], A: [] };
+  ids.forEach(function (id) {
+    var p = BY_ID[id], m = mkt0(p.f, p.r);
+    speso += S.market[id].p;
+    venduti[p.r]++;
+    if (m > 0.5) oss[p.r].push(S.market[id].p / m);
+  });
+
+  /* quanto varrebbe, alle stime attuali, tutto quello che la lega deve ancora comprare */
+  var resta = totale - speso, servono = 0;
+  ROLES.forEach(function (rr) {
+    var n = Math.max(0, S.cfg.teams * S.cfg.sl[rr.k] - venduti[rr.k]);
+    var pool = PLAYERS.filter(function (p) {
+        return p.r === rr.k && !S.market[p.id] && !p.sold; })
+      .map(function (p) { return mkt0(p.f, p.r); })
+      .sort(function (a, b) { return b - a; }).slice(0, n);
+    servono += pool.reduce(function (a, b) { return a + b; }, 0);
+  });
+  if (servono <= 0) return;
+
+  var k = Math.max(0.6, Math.min(1.6, resta / servono));
+
+  function med(a) {
+    if (a.length < 4) return null;
+    var b = a.slice().sort(function (x, y) { return x - y; });
+    var h = Math.floor(b.length / 2);
+    return b.length % 2 ? b[h] : (b[h - 1] + b[h]) / 2;
+  }
+  /* reparto già in corso: uso i prezzi che si stanno facendo davvero.
+     reparto non ancora aperto: uso quanto denaro resta in circolazione. */
+  ROLES.forEach(function (rr) {
+    var o = med(oss[rr.k]);
+    ADJ[rr.k] = Math.max(0.6, Math.min(1.6, o !== null ? o : k));
+  });
+  ADJinfo = { k: k, resta: resta, servono: Math.round(servono), n: ids.length };
+}
+
+/* Le regole della lega spostano il valore di alcuni ruoli.
+   I prezzi di riferimento vengono da una lega col modificatore attivo:
+   quindi il modificatore è già dentro, e lo tolgo solo se lo spegni. */
 function ruleF(p) {
   var k = 1;
-  if (p.r === "P") k *= S.cfg.moddif ? 1.15 : 0.85;
-  if (p.r === "D") k *= S.cfg.moddif ? 1.08 : 0.92;
+  if (!S.cfg.moddif) k *= p.r === "P" ? 0.88 : p.r === "D" ? 0.94 : 1;
   /* senza bonus assist perdono soprattutto esterni e rifinitori */
   if (!S.cfg.assist && /E|W|T/.test(p.rm || "")) k *= 0.88;
   return k;
 }
-function mkt(f) {
-  if (f <= 0) return 1;
-  var r = Math.max(0.05, Math.min(1.4,
-    1.1038 - 0.15 * Math.log(f) + tilt() * (Math.log(f) - Math.log(60))));
-  /* la curva è calibrata su budget 500: riscalo sul budget vero */
-  return Math.max(1, Math.round(f * r * (S.cfg.credits / 500)));
-}
 /* Il tetto sta un filo sopra la mediana di mercato: oltre stai pagando caro. */
 function cap(f, p) {
-  return Math.max(1, Math.round(mkt(f) * 1.15 * (p ? ruleF(p) : 1)));
+  return Math.max(1, Math.round(mkt(f, p ? p.r : "A") * 1.15 * (p ? ruleF(p) : 1)));
 }
-function exp2(f) { var m = mkt(f);
+function exp2(f, r) { var m = mkt(f, r || "A");
   return [Math.max(1, Math.round(m * 0.85)), Math.max(2, Math.round(m * 1.15))]; }
 function alts(p) { return PLAYERS.filter(function (o) {
   return o.r === p.r && o.id !== p.id && !S.market[o.id] && !o.sold && o.f >= p.f * .75;
@@ -470,7 +555,7 @@ function pct(v, m) { return Math.max(0, Math.min(100, (v / m) * 100)); }
 
 /* ----------------------------------------------------------------- azioni */
 window._a = {
-  pick: function (id) { selId = id; bid = exp2(BY_ID[id].f)[0]; picking = false; R(); },
+  pick: function (id) { selId = id; bid = exp2(BY_ID[id].f, BY_ID[id].r)[0]; picking = false; R(); },
   tab: function (t) { tab = t; selId = null; picking = false; R(); },
   rf: function (k) { rf = k; limit = 60; R(); },
   more: function () { limit += 60; E("res").innerHTML = rows(calc()); },
@@ -481,8 +566,14 @@ window._a = {
   band: function (k) { openBand[k] = !openBand[k]; R(); },
   tcorr: function (v) { S.cfg.tcorr = v ? 1 : 0; save(); R(); },
   rule: function (k, v) { S.cfg[k] = v ? 1 : 0; save(); R(); },
-  top: function (d) { S.cfg.top = Math.max(30, Math.min(400, S.cfg.top + d)); save(); R(); },
-  topSet: function (v) { S.cfg.top = v; save(); R(); },
+  top: function (k, d) {
+    S.cfg.top[k] = Math.max(5, Math.min(400, S.cfg.top[k] + d)); save(); R(); },
+  adegua: function (k) {
+    var t = trend()[k];
+    if (!t || t.n < 4 || !t.q) return;
+    S.cfg.top[k] = Math.max(5, Math.min(400, Math.round(S.cfg.top[k] * t.q)));
+    save(); R();
+  },
   cfg: function (k, v) {
     v = parseInt(v) || 0;
     if (k === "credits") {
@@ -492,7 +583,6 @@ window._a = {
       ROLES.forEach(function (r) {
         S.budgets[r.k] = Math.round(S.budgets[r.k] * S.cfg.credits / old); });
     } else if (k === "teams") { S.cfg.teams = Math.max(2, v); fillRiv(); }
-    else if (k === "top") { S.cfg.top = Math.max(30, Math.min(400, v)); }
     else if (k.indexOf("sl.") === 0) { S.cfg.sl[k.slice(3)] = Math.max(0, v); }
     save(); R();
   },
@@ -566,7 +656,24 @@ function vAsta(d) {
   var C = ["tutti", "P", "D", "C", "A"].map(function (k) {
     return '<button data-r="' + k + '" class="' + (rf === k ? "on" : "") +
       '" onclick="_a.rf(\'' + k + '\')">' + (k === "tutti" ? "TUTTI" : k) + "</button>"; }).join("");
-  return '<input class="search" id="q" placeholder="Chi stanno chiamando?" value="' + esc(query) +
+  var T = trend(), tl = trendLbl(T.tot.q);
+  var strip = "";
+  if (T.tot.n >= 4) {
+    var azione = "";
+    if (S.cfg.auto && ADJinfo) {
+      var mosse = ROLES.filter(function (rr) { return Math.abs(ADJ[rr.k] - 1) >= 0.05; })
+        .map(function (rr) {
+          var d = Math.round((ADJ[rr.k] - 1) * 100);
+          return rr.k + " " + (d > 0 ? "+" : "") + d + "%"; });
+      azione = mosse.length
+        ? '<br><span style="color:var(--key)">Tetti ritarati: ' + mosse.join(" · ") + "</span>"
+        : '<br><span style="color:var(--dim2)">Tetti invariati</span>';
+    }
+    strip = '<div class="trend"><span class="dotq" style="background:' + tl[1] + '"></span>' +
+      "<span><b>Andamento asta</b> · " + T.tot.n + " acquisti · " +
+      '<span style="color:' + tl[1] + '">' + tl[0] + "</span>" + azione + "</span></div>";
+  }
+  return strip + '<input class="search" id="q" placeholder="Chi stanno chiamando?" value="' + esc(query) +
     '" autocomplete="off" autocorrect="off" spellcheck="false">' +
     '<div class="chips">' + C + '</div><div class="list" id="res">' + rows(d) + "</div>";
 }
@@ -613,7 +720,7 @@ function vDetail(d) {
   var recFull = Math.max(1, Math.round(cap(p.f, p) * u.k));
   var inf = injF(p);
   var rec = Math.max(1, Math.min(Math.round(cap(p.f, p) * u.k * tf * inf), d.max));
-  var ex = exp2(p.f), open = Math.max(1, Math.round(rec * .85));
+  var ex = exp2(p.f, p.r), open = Math.max(1, Math.round(rec * .85));
   var roleCap = Math.max(1, R2.left - Math.max(0, R2.need - 1));
 
   var v;
@@ -795,6 +902,39 @@ function modHint(d) {
   return h + "</p>";
 }
 
+/* Andamento dell'asta: confronto ogni prezzo pagato — mio o altrui — con la
+   stima di mercato, e ne tengo la mediana. Sopra 1 la lega sta strapagando.
+   Uso la mediana e non la media perché un singolo colpo di testa non deve
+   spostare il termometro. Servono almeno 4 acquisti per dire qualcosa. */
+function trend() {
+  var per = { P: [], D: [], C: [], A: [] }, all = [];
+  Object.keys(S.market).forEach(function (id) {
+    var p = BY_ID[id], m = mkt0(p.f, p.r);
+    if (!(m > 0.5)) return;
+    var q = S.market[id].p / m;
+    per[p.r].push(q); all.push(q);
+  });
+  function med(a) {
+    if (!a.length) return null;
+    var b = a.slice().sort(function (x, y) { return x - y; });
+    var h = Math.floor(b.length / 2);
+    return b.length % 2 ? b[h] : (b[h - 1] + b[h]) / 2;
+  }
+  var o = { tot: { n: all.length, q: med(all) } };
+  ["P", "D", "C", "A"].forEach(function (r) {
+    o[r] = { n: per[r].length, q: med(per[r]) }; });
+  return o;
+}
+function trendLbl(q) {
+  if (q === null) return ["dati insufficienti", "var(--dim2)"];
+  var d = Math.round((q - 1) * 100);
+  if (d >= 15) return ["si sta strapagando, " + d + "% sopra", "var(--bad)"];
+  if (d >= 6) return ["un po' sopra, +" + d + "%", "var(--warn)"];
+  if (d <= -15) return ["si compra bene, " + d + "% sotto", "var(--ok)"];
+  if (d <= -6) return ["un po' sotto, " + d + "%", "var(--ok)"];
+  return ["in linea con le stime", "var(--key)"];
+}
+
 /* ------------------------------------------------------------- obiettivi */
 function vObb(d) {
   var h = '<p class="tiny" style="margin:0 0 12px">La lista che prepari prima dell\'asta. ' +
@@ -847,32 +987,62 @@ function vSet(d) {
     '<p class="tiny" style="margin-top:10px">Rosa da <b>' + SLOTS() + "</b> giocatori · " +
     "monte crediti della lega <b>" + (S.cfg.teams * S.cfg.credits) + "</b> fm</p></div>";
 
-  /* esempi che si aggiornano a ogni tocco: si vede subito l'effetto */
-  var esA = PLAYERS.find(function (x) { return x.n === "Malen"; });
-  var esB = PLAYERS.find(function (x) { return x.n === "Simeone"; });
-  var esC = PLAYERS.find(function (x) { return x.n === "Zortea"; });
-  h += '<div class="card"><h3>Livello dei prezzi della tua lega</h3>' +
-    '<p class="tiny" style="margin-bottom:11px">Quanto è stato pagato il giocatore più costoso ' +
-    "nelle aste della tua lega, su budget 500. È il numero che tara tutta la scala.</p>" +
-    '<div class="topbox">' +
-      '<button onclick="_a.top(-10)">−10</button>' +
-      '<div class="topval"><b>' + S.cfg.top + '</b><span class="cap">crediti</span></div>' +
-      '<button onclick="_a.top(10)">+10</button>' +
-    "</div>" +
-    '<div class="preset">' +
-      '<button class="' + (S.cfg.top === 84 ? "on" : "") + '" onclick="_a.topSet(84)">84 · media nazionale</button>' +
-      '<button class="' + (S.cfg.top === 135 ? "on" : "") + '" onclick="_a.topSet(135)">135 · la tua lega</button>' +
-    "</div>" +
-    '<div class="esempi">' +
-      "<div><b>" + capT(esA) + '</b><span class="cap">' + esc(esA.n) + "</span></div>" +
-      "<div><b>" + capT(esB) + '</b><span class="cap">' + esc(esB.n) + "</span></div>" +
-      "<div><b>" + capT(esC) + '</b><span class="cap">' + esc(esC.n) + "</span></div>" +
-    "</div>" +
-    '<p class="tiny" style="margin-top:9px">I tre tetti qui sopra cambiano mentre premi: ' +
-    "alzando il valore salgono i campioni e <b>scendono</b> i giocatori da pochi crediti, " +
-    "perché i crediti sono fissi e quello che spendi sopra lo togli sotto. " +
-    "L'<b>84</b> è la mediana nazionale su 50.000 acquisti; il <b>135</b> è quanto ha pagato " +
-    "la tua lega l'anno scorso.</p></div>";
+  var TR = trend();
+  h += '<div class="card"><h3>Ritaratura automatica</h3>' +
+    '<label class="sw"><span>Correggi i tetti da solo durante l\'asta</span>' +
+    '<input type="checkbox"' + (S.cfg.auto ? " checked" : "") +
+    ' onchange="_a.rule(\'auto\',this.checked)"></label>' +
+    (S.cfg.auto && ADJinfo
+      ? '<div class="autobox">' + ROLES.map(function (rr) {
+          var d = Math.round((ADJ[rr.k] - 1) * 100);
+          var c = d > 4 ? "var(--bad)" : d < -4 ? "var(--ok)" : "var(--dim2)";
+          return '<div><b style="color:' + c + '">' + (d > 0 ? "+" : "") + d +
+            '%</b><span class="cap">' + rr.k + "</span></div>"; }).join("") + "</div>" +
+        '<p class="tiny" style="margin-top:8px">Nella lega restano <b>' + ADJinfo.resta +
+        "</b> crediti per giocatori che alle stime attuali ne varrebbero <b>" +
+        ADJinfo.servono + "</b>.</p>"
+      : "") +
+    '<p class="tiny" style="margin-top:9px">Il denaro della lega è fissato: ' +
+    (S.cfg.teams * S.cfg.credits) + " crediti in tutto. Se su un reparto si spende più del " +
+    "previsto, per quelli ancora da chiamare <b>resta meno</b>, e i tetti là devono scendere. " +
+    "Un automatismo che si limitasse ad alzare i prezzi ogni volta che la lega strapaga " +
+    "farebbe il contrario di quello che serve: inseguirebbe il mercato invece di proteggerti." +
+    "<br><br>Perciò faccio due cose diverse. Sui reparti <b>già in corso</b> uso i prezzi che " +
+    "si stanno facendo davvero, perché se il tuo tetto resta sotto il mercato non compri " +
+    "nessuno. Sui reparti <b>non ancora aperti</b> uso il denaro che resta in circolazione. " +
+    "In entrambi i casi la correzione non supera il 40% in nessuna direzione.</p></div>";
+
+  h += '<div class="card"><h3>Prezzi della tua lega, reparto per reparto</h3>' +
+    '<p class="tiny" style="margin-bottom:12px">Metti quanto è stato pagato il <b>giocatore ' +
+    "più caro di ogni reparto</b> nelle vostre aste, su budget 500. Sotto vedi i primi tre " +
+    "che ne risultano quest'anno: confrontali con quello che ricordi e aggiusta.</p>";
+
+  ROLES.forEach(function (rr) {
+    var k = rr.k, T = S.cfg.top[k];
+    var top3 = PLAYERS.filter(function (p) { return p.r === k && !p.sold; })
+      .sort(function (a, b) { return b.f - a.f; }).slice(0, 3);
+    var tr = TR[k], lb = trendLbl(tr.q);
+    h += '<div class="calib"><div class="crow">' +
+      '<span class="badge b-' + k + '">' + k + "</span>" +
+      '<span class="cname">' + rr.l + "</span>" +
+      '<button onclick="_a.top(\'' + k + '\',-5)">−5</button>' +
+      '<span class="cval">' + T + "</span>" +
+      '<button onclick="_a.top(\'' + k + '\',5)">+5</button></div>' +
+      '<div class="cprev">' + top3.map(function (p) {
+        return "<span>" + esc(p.n) + " <b>" + capT(p) + "</b></span>"; }).join("") + "</div>" +
+      (tr.n >= 4
+        ? '<div class="ctrend">In asta: ' + tr.n + " presi · " +
+          '<span style="color:' + lb[1] + '">' + lb[0] + "</span>" +
+          (!S.cfg.auto && Math.abs(tr.q - 1) >= 0.1
+            ? ' <button class="more" onclick="_a.adegua(\'' + k + '\')">adegua</button>' : "") +
+          "</div>"
+        : "");
+    h += "</div>";
+  });
+  h += '<p class="tiny" style="margin-top:4px">Quando in un reparto sono stati venduti almeno ' +
+    "quattro giocatori, ti dico se la lega sta pagando sopra o sotto le stime. Il tasto " +
+    "<b>adegua</b> ritara quel reparto sui prezzi che si stanno facendo davvero, così i tetti " +
+    "seguono l'asta invece di restare fermi su quello che immaginavi prima di iniziare.</p></div>";
 
   h += '<div class="card"><h3>Regole che cambiano i valori</h3>' +
     '<label class="sw"><span>Modificatore di difesa attivo</span>' +
@@ -1117,6 +1287,7 @@ function vInfo() {
 
 /* ---------------------------------------------------------------- render */
 function R() {
+  autoCal();
   var d = calc();
   head(d);
   var h = tab === "asta" ? vAsta(d) : tab === "rosa" ? vRosa(d) :
