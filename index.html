@@ -59,7 +59,10 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 .chips button[data-r=tutti].on{background:var(--txt)}
 .list{margin-top:11px;border:1px solid var(--line);border-radius:11px;overflow:hidden}
 .it{display:flex;align-items:center;gap:10px;width:100%;padding:11px 12px;text-align:left;
-  border-top:1px solid var(--line);background:var(--panel);font-size:15px}
+  border-top:1px solid var(--line);background:var(--panel);font-size:15px;
+  /* le righe fuori schermo non vengono calcolate né disegnate: altezza costante,
+     quindi basta un valore fisso e la barra di scorrimento non salta */
+  content-visibility:auto;contain-intrinsic-size:auto 57px}
 .it:first-child{border-top:0}
 .it:active{background:var(--line)}
 .badge{width:22px;height:22px;flex:0 0 auto;border-radius:5px;display:grid;place-items:center;
@@ -184,7 +187,10 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 .acts .other{background:var(--line2);font-weight:700}
 
 /* ------------------------------------------------------------------ card */
-.card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px;margin-bottom:11px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px;margin-bottom:11px;
+  /* le schede hanno altezze molto diverse: con "auto" il browser ricorda quella
+     reale dopo la prima misura, evitando gli scatti della barra di scorrimento */
+  content-visibility:auto;contain-intrinsic-size:auto 160px}
 .card h3{margin:0 0 9px;font-size:16px;letter-spacing:-.01em}
 .rhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px}
 .rhead .lft{display:flex;align-items:center;gap:8px}
@@ -326,7 +332,7 @@ var LS = (function () {
   };
 })();
 
-var S = { market: {}, targets: {}, riv: [],
+var S = { market: {}, targets: {}, riv: [], hist: [],
           cfg: { teams: DEF.teams, credits: DEF.credits,
                  sl: Object.assign({}, DEF.sl), tcorr: 1,
                  top: { P: 76, D: 50, C: 98, A: 139 },  // il più pagato per reparto
@@ -345,7 +351,14 @@ function SLOTS() { return ROLES.reduce(function (a, r) { return a + S.cfg.sl[r.k
 function START() { return S.cfg.credits; }
 function TEAMS_N() { return S.cfg.teams; }
 /* i prezzi di riferimento sono su budget 500: si riscalano in proporzione */
-var hist = [];
+/* La cronologia vive dentro S: così sopravvive a un refresh e viene salvata
+   e ripristinata insieme al resto. Tetto a 20 voci per non gonfiare
+   localStorage e il backup verso fine asta. */
+var HIST_MAX = 20;
+function histPush(v) {
+  S.hist.push(v);
+  while (S.hist.length > HIST_MAX) S.hist.shift();
+}
 try { var raw = LS.getItem(KEY); if (raw) { var o = JSON.parse(raw);
   S.market = o.market || {}; S.targets = o.targets || {};
   if (o.cfg) { S.cfg = o.cfg;
@@ -358,6 +371,7 @@ try { var raw = LS.getItem(KEY); if (raw) { var o = JSON.parse(raw);
     if (S.cfg.autoBudget === undefined) S.cfg.autoBudget = 1; }
   if (o.budgets) S.budgets = o.budgets;
   if (o.riv) S.riv = o.riv;
+  S.hist = Array.isArray(o.hist) ? o.hist.slice(-HIST_MAX) : [];
   fillRiv(); } }
 catch (e) {}
 var storeOk = true;
@@ -367,6 +381,8 @@ function save() { try { LS.setItem(KEY, JSON.stringify(S)); storeOk = true; }
 var tab = "asta", query = "", rf = "tutti", selId = null, bid = 0, gkPick = "";
 var picking = false;   // sto scegliendo a quale avversario assegnare
 var limit = 60;        // quanti risultati mostro: si allarga col tasto "mostra altri"
+var qTimer = null;     // attesa prima di rifiltrare la ricerca
+var buyLock = false;   // impedisce che un doppio tocco registri due acquisti
 var openBand = {};     // fasce espanse nella scheda "chi resta"
 
 /* ---------------------------------------------------------------- modello */
@@ -640,28 +656,33 @@ window._a = {
       if (o.cfg) S.cfg = o.cfg;
       if (o.budgets) S.budgets = o.budgets;
       if (o.riv) S.riv = o.riv;
-      fillRiv(); hist = []; save(); R();
+      fillRiv(); S.hist = Array.isArray(o.hist) ? o.hist.slice(-HIST_MAX) : []; save(); R();
       alert("Asta ripristinata.");
     } catch (e) { alert("Testo non valido: assicurati di incollare tutto il backup."); }
   },
-  drop: function (id) { hist.push({ id: id, prev: S.market[id] });
+  drop: function (id) { histPush({ id: id, prev: S.market[id] });
     delete S.market[id]; save(); R(); },
-  undo: function () { var l = hist.pop(); if (!l) return;
+  undo: function () { var l = S.hist.pop(); if (!l) return;
     if (l.prev) S.market[l.id] = l.prev; else delete S.market[l.id]; save(); R(); },
   other: function () { picking = true; R(); },
   cancel: function () { picking = false; R(); },
   rename: function (i, v) { S.riv[i] = v || ("Squadra " + (i + 2)); save(); R(); },
   buy: function (o) {
+    /* Un doppio tocco sul tasto verde registrerebbe due volte lo stesso acquisto.
+       Il blocco sta solo qui: sui pulsanti dell'offerta il tocco ripetuto è
+       l'uso previsto, e bloccarli ingoierebbe rilanci veri. */
+    if (buyLock) return;
+    buyLock = true; setTimeout(function () { buyLock = false; }, 400);
     var p = BY_ID[selId]; if (!p) return;
     var d = calc(), pr = Math.max(1, bid || 1);
     if (o === "me" && pr > d.max) return;
-    hist.push({ id: p.id, prev: S.market[p.id] || null });
+    histPush({ id: p.id, prev: S.market[p.id] || null });
     S.market[p.id] = { o: o, p: pr };
     selId = null; bid = 0; query = ""; picking = false; save(); R();
   },
   reset: function () {
     if (!confirm("Azzeri tutta l'asta? Rosa, acquisti e obiettivi vengono cancellati.")) return;
-    S.market = {}; S.targets = {}; hist = []; selId = null; bid = 0; query = "";
+    S.market = {}; S.targets = {}; S.hist = []; selId = null; bid = 0; query = "";
     try { LS.removeItem(KEY); } catch (e) {} R();
   }
 };
@@ -684,7 +705,7 @@ function head(d) {
   E("tb").innerHTML = T.map(function (t) {
     return '<button class="' + (tab === t[0] ? "on" : "") + '" onclick="_a.tab(\'' + t[0] + '\')">' +
       t[1] + "</button>"; }).join("") +
-    '<button class="undo" onclick="_a.undo()"' + (hist.length ? "" : " disabled") + ">Annulla</button>";
+    '<button class="undo" onclick="_a.undo()"' + (S.hist.length ? "" : " disabled") + ">Annulla</button>";
 }
 function st(v, l, c) { return '<div><b style="color:' + c + '">' + v + '</b><span class="cap">' +
   l + "</span></div>"; }
@@ -1348,7 +1369,16 @@ function R() {
 
   var q = E("q");
   if (q) q.addEventListener("input", function () {
-    query = this.value; limit = 60; E("res").innerHTML = rows(calc()); });
+    /* calc() gira su tutti i giocatori: senza attesa lo rifarebbe a ogni tasto.
+       Ridisegno solo #res, non l'intera pagina. */
+    var v = this.value;
+    clearTimeout(qTimer);
+    qTimer = setTimeout(function () {
+      query = v; limit = 60;
+      var r = E("res");
+      if (r) r.innerHTML = rows(calc());
+    }, 180);
+  });
   var b = E("bid");
   if (b) b.addEventListener("input", function () {
     bid = Math.max(0, parseInt(this.value) || 0);
