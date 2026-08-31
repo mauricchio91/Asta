@@ -212,6 +212,26 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 .band .b{font-size:14px;color:#c3d0da;line-height:1.75}
 .band .b button{color:#c3d0da;font-size:14px;padding:0}
 .band .b .q{font-family:var(--mono);font-size:11px;color:var(--dim2)}
+#splash{position:fixed;inset:0;z-index:200;background:var(--bg);
+  display:flex;align-items:center;justify-content:center;
+  padding:env(safe-area-inset-top) 24px env(safe-area-inset-bottom);
+  opacity:1;transition:opacity .45s ease}
+#splash.via{opacity:0;pointer-events:none}
+.sp-in{text-align:center;max-width:320px;width:100%}
+.sp-logo{width:96px;height:96px;display:block;margin:0 auto 22px;
+  fill:none;stroke:var(--D);stroke-width:7;stroke-linejoin:round}
+.sp-t{font-size:30px;font-weight:800;letter-spacing:.18em;color:var(--txt);line-height:1}
+.sp-s{margin-top:9px;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim2)}
+.sp-r{margin-top:26px;height:3px;border-radius:2px;background:var(--line);overflow:hidden}
+/* la barra usa i colori dei ruoli, gli stessi dei badge nell'elenco */
+.sp-r i{display:block;height:100%;width:40%;border-radius:2px;
+  background:linear-gradient(90deg,var(--P),var(--D),var(--C),var(--A));
+  animation:sp-go 1.1s ease-in-out infinite}
+@keyframes sp-go{0%{transform:translateX(-105%)}100%{transform:translateX(255%)}}
+@media(prefers-reduced-motion:reduce){
+  #splash{transition:none}
+  .sp-r i{animation:none;width:100%}
+}
 #toasts{position:fixed;left:0;right:0;top:calc(env(safe-area-inset-top) + 8px);z-index:60;
   display:flex;flex-direction:column;gap:6px;padding:0 12px;pointer-events:none}
 .toast{pointer-events:auto;background:var(--panel);border:1px solid var(--line2);
@@ -290,6 +310,23 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 </script>
 </head>
 <body>
+<!-- Schermata d'avvio. È scritta nel body e non generata dallo script, così
+     compare mentre il resto si carica invece del bianco che iOS mostrerebbe
+     lanciando l'app dalla schermata Home. Si toglie da sola. -->
+<div id="splash" role="status" aria-label="Avvio in corso">
+  <div class="sp-in">
+    <svg class="sp-logo" viewBox="0 0 180 180" aria-hidden="true">
+      <rect x="16" y="26" width="148" height="128" rx="12"/>
+      <line x1="90" y1="26" x2="90" y2="154"/>
+      <circle cx="90" cy="90" r="24"/>
+      <rect x="16" y="60" width="28" height="60"/>
+      <rect x="136" y="60" width="28" height="60"/>
+    </svg>
+    <div class="sp-t">ASTA LIVE</div>
+    <div class="sp-s">Fantacalcio 2026/27</div>
+    <div class="sp-r"><i></i></div>
+  </div>
+</div>
 <header>
   <div class="hstats" id="hs"></div>
   <div class="spend" id="sp"></div>
@@ -1637,28 +1674,53 @@ function vInfo() {
      "<b>Non dal FVM diviso due</b>: quello era un errore. Il FVM è un massimo teorico, e nelle aste " +
      "vere i campioni costano molto meno. Il prezzo base viene da una curva calibrata sui prezzi " +
      "realmente pagati in oltre 50.000 acquisti di questa stagione: Lautaro va in mediana a 84 " +
-     "crediti su 500, non a 184. La scala si tara poi sulla tua lega, col prezzo del più caro " +
-     "che imposti nel Setup: la tua paga circa <b>1,7 volte la media nazionale</b> sui campioni. " +
+     "crediti su 500, non a 184 — quella però è la mediana nazionale. La scala si tara poi sulla " +
+     "tua lega, col prezzo del più caro di ogni reparto che imposti nel Setup: la tua paga circa " +
+     "<b>1,7 volte la media nazionale</b> sui campioni, quindi i numeri che vedi sono più alti. " +
      "Sopra questo agiscono l'indice di scarsità, la titolarità, gli infortuni e le regole."],
     ["Offerta massima",
-     "Devi completare 25 slot e tenere 1 credito per ognuno di quelli vuoti: <b>crediti − (slot − 1)</b>. " +
+     "Devi completare tutti gli slot della rosa e tenere 1 credito per ognuno di quelli ancora " +
+     "vuoti: <b>crediti − (slot − 1)</b>. " +
      "Vale anche per gli avversari: se sai quanti slot gli mancano, sai fin dove possono spingersi."],
     ["Indice di riserva",
      "I tuoi crediti diviso la media avversaria, calcolata sugli acquisti che registri. <b>Sopra 1,10</b> " +
      "sei in vantaggio e puoi aggredire. <b>Sotto 0,90</b> hai speso troppo presto: chiudi gli slot a " +
      "1–5 crediti e non rincorrere."],
     ["Modificatore difesa",
-     "Media voto di <b>portiere più i 3 migliori difensori</b>. Ogni punto vale circa 7,6 gol a stagione: " +
-     "passare da <b>+1 a +4</b> vale più di un attaccante da 20 gol. Servono centrali da voto alto per la " +
-     "media e terzini da bonus in slot separati, su squadre diverse."],
+     "Media voto di <b>portiere più i 3 migliori difensori</b>. Ogni punto vale circa 7,6 gol a " +
+     "stagione. Attenzione però a quanto è davvero raggiungibile: il <b>+3 chiede una media di " +
+     "6,50</b> e in tutto il listone un solo difensore ci arriva da solo, nessun portiere. Il " +
+     "salto realistico è da +1 a +2, e costa una sessantina di crediti scegliendo bene. Servono " +
+     "centrali da voto alto per la media e terzini da bonus in slot separati, su squadre " +
+     "diverse: quattro giocatori della stessa difesa crollano tutti insieme."],
     ["Titolarità",
      "La percentuale sotto ogni nome è la titolarità attesa secondo FantaLab. È il dato più " +
      "importante della scheda: un giocatore al 25% vale una frazione del suo FVM, perché il " +
-     "tetto presuppone che giochi. <b>Verde sopra il 75%, rosso sotto il 50%</b>."],
+     "tetto presuppone che giochi. <b>Verde sopra il 75%, rosso sotto il 50%</b>. " +
+     "Chi è dato al 50% vale il 21% in meno, chi è al 25% un terzo in meno: una correzione " +
+     "parziale, perché il FVM tiene già conto in parte del rischio panchina. Se non ti convince " +
+     "la spegni dal Setup e i tetti tornano pieni, con la percentuale sempre in vista."],
     ["Rigoristi e piazzati",
      "Le sigle R, P e C accanto al nome segnalano rigorista, tiratore di punizioni e di calci " +
      "d'angolo. Il rigore è il bonus a <b>varianza più bassa</b> che esista: a parità di FVM, il " +
      "rigorista vale sempre più dell'altro."],
+    ["Il piano di spesa",
+     "La ripartizione fra porta, difesa, centrocampo e attacco si fissa <b>prima</b> che l'asta " +
+     "cominci e poi non si muove più: è la decisione strategica, e ricalcolarla mentre compri la " +
+     "farebbe scivolare verso i reparti già chiusi. Le cifre però respirano: se chiudi la porta " +
+     "spendendo meno del previsto, l'avanzo passa ai reparti <b>non ancora chiamati</b>. " +
+     "Sistema regolamento e prezzi nel Setup prima di iniziare, perché è lì che il piano nasce."],
+    ["Ritaratura automatica",
+     "I tetti invece si muovono per tutta l'asta. Sul reparto in corso seguono i prezzi che si " +
+     "stanno facendo davvero, perché se resti sotto il mercato non compri nessuno. Sui reparti " +
+     "non ancora aperti guardano <b>quanto denaro resta in circolazione</b>: se la lega ha " +
+     "strapagato i portieri, per gli attaccanti ci saranno meno soldi e i tetti scendono in " +
+     "anticipo. La correzione non supera mai il 40% in nessuna direzione."],
+    ["Ritmo di spesa",
+     "Se riempi gli slot molto più in fretta di quanto spendi, finirai con la cassa piena e una " +
+     "rosa scadente: <b>i crediti avanzati valgono zero</b>. L'app confronta la quota di rosa " +
+     "completata con la quota di budget usata e ti avvisa quando divergono di oltre un quarto, " +
+     "in entrambe le direzioni."],
     ["Squadre rivali",
      "Quando registri un acquisto altrui puoi assegnarlo alla squadra che l'ha preso. La scheda " +
      "Rivali calcola per ognuna crediti residui, slot mancanti e offerta massima. Se un " +
@@ -1735,6 +1797,25 @@ if (BRIDGE) {
 }
 
 R();
+
+/* Tolgo l'avvio dopo il primo disegno, ma non prima di 550 ms: su un telefono
+   veloce sparirebbe in un lampo dando l'impressione di uno sfarfallio. Un tocco
+   lo salta subito, e se qualcosa andasse storto un timer di sicurezza lo rimuove
+   comunque: non deve mai poter restare bloccato sopra l'app. */
+(function () {
+  var sp = document.getElementById("splash");
+  if (!sp) return;
+  var tolto = false;
+  function via() {
+    if (tolto) return;
+    tolto = true;
+    sp.className = "via";
+    setTimeout(function () { if (sp.parentNode) sp.parentNode.removeChild(sp); }, 500);
+  }
+  sp.addEventListener("click", via);
+  setTimeout(via, 550);
+  setTimeout(via, 4000);   // rete di sicurezza
+})();
 </script>
 </body>
 </html>
