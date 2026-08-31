@@ -946,15 +946,20 @@ window._a = {
   gk: function (v) { gkPick = v; R(); },
   band: function (k) { openBand[k] = !openBand[k]; R(); },
   tcorr: function (v) { S.cfg.tcorr = v ? 1 : 0; save(); R(); },
-  rule: function (k, v) { S.cfg[k] = v ? 1 : 0; applicaBudget(true); save(); R(); },
+  rule: function (k, v) { S.cfg[k] = v ? 1 : 0; applicaBudget(false); save(); R(); },
   top: function (k, d) {
     S.cfg.top[k] = Math.max(5, Math.min(400, S.cfg.top[k] + d));
-    applicaBudget(true); save(); R(); },
+    applicaBudget(false); save(); R(); },
+  /* Ritara i prezzi di riferimento sui valori realmente fatti, e con essi i
+     tetti. NON rifà il piano di spesa: a asta iniziata quel ricalcolo sposta
+     budget verso i reparti caldi, che sono spesso già chiusi. Misurato: con il
+     ricalcolo si scende da 7 primi posti su 10 a 6, e da 10 a 10 con un punto
+     di forza in meno. Il piano si rifà solo prima di cominciare. */
   adegua: function (k) {
     var t = trend()[k];
     if (!t || t.n < 4 || !t.q) return;
     S.cfg.top[k] = Math.max(5, Math.min(400, Math.round(S.cfg.top[k] * t.q)));
-    applicaBudget(true); save(); R();
+    applicaBudget(false); save(); R();
   },
   cfg: function (k, v) {
     v = parseInt(v) || 0;
