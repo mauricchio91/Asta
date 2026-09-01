@@ -2,7 +2,7 @@
    Strategia: prima la rete con un tetto di 2,5 secondi, poi la copia locale.
    In una sala con connessione ballerina è la scelta giusta: non resti mai
    appeso ad attendere, ma quando c'è linea prendi la versione aggiornata. */
-var CACHE = "asta-live-b13ed8e7";
+var CACHE = "asta-live-ae9b94b9";
 var FILES = ["./", "./index.html", "./manifest.webmanifest"];
 
 /* caches.addAll è atomica: se anche un solo file risponde 404 l'intera Promise
