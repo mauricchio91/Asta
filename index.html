@@ -52,8 +52,9 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 .search::placeholder{color:var(--dim2)}
 .chips{display:flex;gap:4px;margin:9px 0 0}
 .sortrow{gap:5px;overflow-x:auto;padding-bottom:2px}
-.sortrow button{flex:0 0 auto;font-size:11.5px;padding:5px 9px;opacity:.8}
-.sortrow button.on{opacity:1}
+.sortrow button{flex:0 0 auto;font-size:11.5px;padding:5px 9px;opacity:.75;
+  border:1px solid var(--line2);border-radius:7px}
+.sortrow button.on{opacity:1;background:var(--key);color:var(--bg);border-color:var(--key)}
 .chips button{border-radius:7px;padding:6px 13px;font-size:12px;font-weight:800;letter-spacing:.03em;
   background:var(--line);color:var(--dim)}
 .chips button.on{color:var(--bg)}
@@ -1000,6 +1001,15 @@ window._a = {
      senza spegnere autoBudget, applicaBudget() lo riscrive al render successivo. */
   bud: function (k, v) {
     S.budgets[k] = parseInt(v) || 0; S.cfg.autoBudget = 0; save(); R(); },
+  /* Nessun altro punto dell'app riaccende l'automatismo una volta spento --
+     nemmeno "Ricomincia". Serve un modo esplicito per tornare indietro,
+     altrimenti chi tocca un budget per errore resta bloccato per il resto
+     dell'asta senza sapere come uscirne. */
+  autoBud: function () {
+    S.cfg.autoBudget = 1;
+    applicaBudget(true);
+    save(); R();
+  },
   gk: function (v) { gkPick = v; R(); },
   band: function (k) { openBand[k] = !openBand[k]; R(); },
   tcorr: function (v) { S.cfg.tcorr = v ? 1 : 0; save(); R(); },
@@ -1300,7 +1310,17 @@ function vDetail(d) {
 
 /* ------------------------------------------------------------------ rosa */
 function vRosa(d) {
-  var h = '<div class="card"><h3>Fanta-Wrapped</h3>' +
+  var h = "";
+  if (!S.cfg.autoBudget) {
+    h += '<div class="card" style="border-color:#6e5a1f;background:#1a1608">' +
+      '<h3 style="color:#e8c34d">Ripartizione manuale</h3>' +
+      '<p class="tiny" style="margin-bottom:10px">Hai modificato a mano il budget di un reparto: ' +
+      "da quel momento <b>nessuno dei quattro</b> si aggiorna più da solo, anche se non hai " +
+      'toccato gli altri tre. Se vuoi tornare al calcolo automatico -- perdendo però le cifre ' +
+      "che hai scritto a mano -- usa questo tasto.</p>" +
+      '<button class="other" onclick="_a.autoBud()">Torna automatico</button></div>';
+  }
+  h += '<div class="card"><h3>Fanta-Wrapped</h3>' +
     '<p class="tiny" style="margin-bottom:9px">Il riepilogo di fine asta: il colpaccio, ' +
     "l'affare peggiore e lo sceicco della lega, pronto da salvare come immagine.</p>" +
     '<button class="other" onclick="_a.wrapped(true)">Genera il riepilogo</button></div>';
