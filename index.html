@@ -1188,7 +1188,13 @@ function rows(d) {
       (p.inj >= 0 ? ' <span class="inj">' + (p.inj > 0 ? p.inj + "ª" : "?") + "</span>" : "") +
       (S.targets[p.id] ? ' <span style="color:var(--key)">★</span>' : "") +
       '<br><span class="tit" style="color:' + titCol(p.tit) + '">' + titTxt(p) + "</span></span>" +
-      '<span class="val"><b>' + tettoOp(p, d) + '</b><span class="cap">tetto</span></span>' +
+      /* Prima l'ordinamento cambiava la sequenza dei giocatori ma la cifra
+         mostrata restava sempre "tetto", qualunque criterio scegliessi:
+         ordinando per FVM il numero a schermo non era quello. Quando il
+         criterio è FVM mostro il FVM vero, non il tetto consigliato. */
+      (sortBy === "fvm"
+        ? '<span class="val"><b>' + p.f + '</b><span class="cap">FVM</span></span>'
+        : '<span class="val"><b>' + tettoOp(p, d) + '</b><span class="cap">tetto</span></span>') +
       (d.per[p.r].need <= 0 ? '<span class="cap" style="color:var(--dim2)">pieno</span>' : "") +
       "</button>"; }).join("") + (more > 60 ? foot : "");
 }
