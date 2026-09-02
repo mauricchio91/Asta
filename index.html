@@ -511,6 +511,8 @@ function checkAlerts(d) {
 
 var wrappedOpen = false;   // il riepilogo di fine asta è un overlay, non una scheda in più
 var openBand = {};     // fasce espanse nella scheda "chi resta"
+var listaMode = "valore"; // "valore" (FVM) oppure "conv" (miglior rapporto qualità/tetto)
+var cameFrom = "asta";   // scheda da cui si è aperto un giocatore, per il tasto indietro
 
 /* ---------------------------------------------------------------- modello */
 /* Prezzo di mercato, calibrato sui prezzi realmente pagati in oltre 50.000
@@ -801,6 +803,10 @@ function urg(a, need) {
 function modLbl(a) { return a >= 7 ? "+5" : a >= 6.75 ? "+4" : a >= 6.5 ? "+3"
                           : a >= 6.25 ? "+2" : a >= 6 ? "+1" : "0"; }
 /* griglia: quante giornate resti senza un portiere in casa */
+/* Fantamedia attesa per il calcolo di convenienza: se FantaLab non la
+   fornisce direttamente, la stimo dalla media voto con lo stesso margine
+   che il resto dell'app usa per i bonus medi -- non lascio un buco. */
+function pfmVal(p) { return p.pfm > 0 ? p.pfm : pmv(p) + 0.4; }
 function pairVal(a, b) { return (GRID[a] && typeof GRID[a][b] === "number") ? GRID[a][b] : null; }
 function pairLbl(v) { return v <= 3 ? ["Perfetto", "var(--ok)"] : v <= 7 ? ["Buono", "var(--ok)"]
                           : v <= 11 ? ["Medio", "var(--warn)"] : ["Scarso", "var(--bad)"]; }
@@ -988,9 +994,15 @@ window._a = {
   /* La scheda di dettaglio vive dentro vAsta: senza riportare tab su "asta"
      il click da "lista", "inf", "gk" o "obb" imposta selId e non mostra nulla. */
   pick: function (id) {
+    cameFrom = tab;   // se già su "asta" resta "asta": nessun cambiamento in quel caso
     selId = id; bid = exp2(BY_ID[id].f, BY_ID[id].r)[0];
     picking = false; tab = "asta"; R();
   },
+  /* Solo per il tasto "indietro": annullare la scelta deve riportare dove
+     si era prima (Chi resta, Infortuni, Obiettivi...), non sempre su Asta.
+     Comprare invece resta su Asta apposta, pronti per il prossimo nome:
+     quel comportamento non cambia. */
+  backDetail: function () { tab = cameFrom; selId = null; picking = false; R(); },
   tab: function (t) { tab = t; selId = null; picking = false; R(); },
   rf: function (k) { rf = k; limit = 60; R(); },
   sort: function (k) { sortBy = k; limit = 60; R(); },
@@ -1012,6 +1024,7 @@ window._a = {
   },
   gk: function (v) { gkPick = v; R(); },
   band: function (k) { openBand[k] = !openBand[k]; R(); },
+  listaMode: function (m) { listaMode = m; R(); },
   tcorr: function (v) { S.cfg.tcorr = v ? 1 : 0; save(); R(); },
   rule: function (k, v) { S.cfg[k] = v ? 1 : 0; applicaBudget(false); save(); R(); },
   top: function (k, d) {
@@ -1279,7 +1292,7 @@ function vDetail(d) {
         " giornate su 38 in cui giocano in casa insieme</div>"; }
   }
 
-  return '<button class="back" onclick="_a.tab(\'asta\')">← Cambia giocatore</button>' +
+  return '<button class="back" onclick="_a.backDetail()">← Cambia giocatore</button>' +
   '<div class="sheet"><div class="hd"><div><h2>' + esc(p.n) + '</h2>' +
     '<p class="meta"><span class="badge b-' + p.r + '" style="display:inline-grid;vertical-align:-5px">' +
     p.r + "</span> " + esc(p.t) + " · " + esc(p.rm) + " · Q " + p.q + " · FVM " + p.f + "</p></div>" +
@@ -1646,7 +1659,15 @@ function vRiv(d) {
 
 /* ------------------------------------------------------------- chi resta */
 function vLista(d) {
-  var h = '<p class="tiny" style="margin:0 0 12px">Chi è ancora libero. Finché le alternative ' +
+  var toggle = '<div class="chips" style="margin:0 0 12px">' +
+    '<button class="' + (listaMode === "valore" ? "on" : "") +
+    '" onclick="_a.listaMode(\'valore\')">Per valore</button>' +
+    '<button class="' + (listaMode === "conv" ? "on" : "") +
+    '" onclick="_a.listaMode(\'conv\')">Per convenienza</button></div>';
+
+  if (listaMode === "conv") return toggle + vListaConv(d);
+
+  var h = toggle + '<p class="tiny" style="margin:0 0 12px">Chi è ancora libero. Finché le alternative ' +
     "sono tante puoi permetterti di dire di no. La prima percentuale è la titolarità attesa, " +
     "il numero dopo è il tetto in crediti. <b>R</b> segnala il rigorista.</p>";
   ROLES.forEach(function (r) {
@@ -1671,6 +1692,58 @@ function vLista(d) {
             ? ' <button class="more" onclick="_a.band(\'' + r.k + b[0] + '\')">+' +
               (b[1].length - 14) + " altri</button>" : "")
         : '<span style="color:var(--dim2)">nessuno</span>') + "</div></div>";
+    });
+    h += "</div>";
+  });
+  return h;
+}
+
+/* Migliori occasioni ancora libere: non "prendi lui", ma "questo, alle
+   condizioni di adesso, rende più di quanto costa". Il criterio è la
+   fantamedia attesa diviso il tetto -- quanti punti attesi per credito
+   speso -- lo stesso tipo di ragionamento che fai a mano aprendo un
+   giocatore per volta, solo che qui lo faccio io su tutti insieme.
+   Non nasconde il rischio: chi ha bassa titolarità resta in fondo alla
+   pagina con la percentuale ben visibile, la scelta se rischiarci resta
+   tua, come ovunque nel resto dell'app. */
+function vListaConv(d) {
+  var h = '<p class="tiny" style="margin:0 0 12px">Fantamedia attesa diviso tetto: chi rende ' +
+    "di più per ogni credito speso, fra chi è ancora libero. Solo titolari con almeno il " +
+    "<b>50% di presenze attese</b>: sotto quella soglia il tetto scende quasi a zero e il " +
+    "rapporto smette di avere senso, non perché il giocatore sia davvero un affare.<br><br>" +
+    "<b>Attenzione</b>: questo è un rendimento per credito, non una classifica di forza. " +
+    "Un giocatore da 200 crediti con fantamedia molto più alta può valere di più in assoluto " +
+    "anche se qui compare in fondo, perché costa tanto. Guarda sempre la colonna " +
+    "<b>FM attesa</b> accanto al nome, non solo il numero verde.</p>";
+  ROLES.forEach(function (r) {
+    /* Sotto il 50% di titolarità il tetto scende fino al minimo di 1 credito,
+       e dividendo per un numero così piccolo il rapporto esplode per
+       chiunque abbia un pfm anche solo normale -- capitava con panchinari
+       all'1% di titolarità che sembravano il miglior affare del listone.
+       La sola titolarità non basta: anche un giocatore al 50% ma con un
+       FVM quasi nullo (1 o 2) ha comunque un tetto a 1 credito, stesso
+       problema con un'altra causa -- serve un tetto minimo perché il
+       rapporto abbia un senso, non solo una titolarità minima. */
+    var av = PLAYERS.filter(function (p) {
+        return p.r === r.k && !S.market[p.id] && !p.sold && p.tit >= 50; })
+      .map(function (p) { var fm = pfmVal(p); return { p: p, fm: fm, rapp: fm / Math.max(1, tettoOp(p, d)) }; })
+      .filter(function (x) { return tettoOp(x.p, d) >= 3; })
+      .sort(function (a, b) { return b.rapp - a.rapp; })
+      .slice(0, 14);
+    h += '<div class="card"><div class="rhead"><div class="lft">' +
+      '<span class="badge b-' + r.k + '">' + r.k + '</span><h3 style=margin:0>' + r.l + "</h3></div>" +
+      '<span class="cap">ti mancano ' + d.per[r.k].need + " slot</span></div>";
+    if (!av.length) h += '<p class="tiny">Nessuno libero in questo ruolo.</p>';
+    av.forEach(function (x) {
+      h += '<div class="ln"><span class="g"><button onclick="_a.pick(\'' + x.p.id +
+        '\')" style="color:var(--txt);font-weight:700">' + esc(x.p.n) + "</button>" +
+        (x.p.sp.indexOf("R") >= 0 ? ' <span class="sp">R</span>' : "") +
+        ' <span style="color:var(--dim2)">· ' + esc(x.p.t) + "</span>" +
+        '<br><span class="tit" style="color:' + titCol(x.p.tit) + '">' + titTxt(x.p) +
+        "</span> · <span class=\"tit\">FM attesa " + x.fm.toFixed(2) + "</span></span>" +
+        '<span class="p" style="color:var(--key)">' + x.rapp.toFixed(2) +
+        '<span class="cap">fm/fm</span></span>' +
+        '<span class="p">' + tettoOp(x.p, d) + "</span></div>";
     });
     h += "</div>";
   });
