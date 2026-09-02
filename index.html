@@ -606,24 +606,76 @@ function applicaBudget(forza) {
     if (!p || speso[p.r] === undefined) return;
     speso[p.r] += S.market[id].p; presi[p.r]++; totSpeso += S.market[id].p;
   });
-  /* L'avanzo di un reparto chiuso passa solo ai reparti NON ANCORA iniziati.
-     Darlo anche a quello in corso innesca una reazione a catena: lo spende
-     subito, e i reparti successivi restano a secco. Nelle simulazioni l'attacco
-     finiva con 6 crediti su 500 e la rosa perdeva tre punti a giornata.
-     Il reparto in corso tiene la cifra che aveva nel piano: è il suo limite. */
-  var pianoTot = {}, avanzo = 0, pesiFuturi = 0;
+  /* La regola è asimmetrica, e la simulazione a 10 aste con 5 strategie
+     rivali è quella che l'ha imposta.
+
+     Se un reparto chiuso ha RISPARMIATO rispetto al piano, quell'avanzo va
+     solo ai reparti NON ANCORA iniziati: darlo a uno già in corso lo fa
+     spendere subito sul giocatore in trattativa in quel momento, e i
+     reparti chiamati dopo restano a secco -- misurato, l'attacco finiva
+     con 6 crediti su 500 e la rosa perdeva tre punti di forza a giornata.
+
+     Se invece un reparto chiuso ha SFORATO il piano, quell'eccesso va tolto
+     a TUTTI i reparti ancora aperti, compresi quelli in corso: restringere
+     un tetto non innesca nessuna cascata, è solo prudenza. Senza questo lato
+     della regola la somma dei budget cresceva senza controllo -- in una
+     rosa completa arrivava a 662 su 500, perché lo sforamento di un reparto
+     chiuso non veniva mai tolto a nessuno. */
+  var pianoTot = {}, sovrasforo = 0, avanzoLibero = 0, pesiAperti = 0, pesiFuturi = 0;
+  var aperti = [];
   ROLES.forEach(function (rr) {
     pianoTot[rr.k] = Math.round(S.plan[rr.k] * S.cfg.credits);
     var mancano = S.cfg.sl[rr.k] - presi[rr.k];
-    if (mancano <= 0) avanzo += pianoTot[rr.k] - speso[rr.k];   // chiuso: libera il non speso
-    else if (presi[rr.k] === 0) pesiFuturi += S.plan[rr.k];     // non ancora iniziato
+    if (mancano <= 0) {
+      var diff = pianoTot[rr.k] - speso[rr.k];
+      if (diff >= 0) avanzoLibero += diff; else sovrasforo += -diff;
+    } else {
+      aperti.push(rr.k);
+      pesiAperti += S.plan[rr.k];
+      if (presi[rr.k] === 0) pesiFuturi += S.plan[rr.k];
+    }
   });
   ROLES.forEach(function (rr) {
-    var mancano = S.cfg.sl[rr.k] - presi[rr.k];
-    if (mancano <= 0) { S.budgets[rr.k] = speso[rr.k]; return; }
-    var extra = (presi[rr.k] === 0 && pesiFuturi > 0)
-      ? Math.round(avanzo * S.plan[rr.k] / pesiFuturi) : 0;
-    S.budgets[rr.k] = Math.max(speso[rr.k], pianoTot[rr.k] + extra);
+    if (S.cfg.sl[rr.k] - presi[rr.k] <= 0) S.budgets[rr.k] = speso[rr.k];
+  });
+
+  /* I reparti aperti partono da un valore "grezzo": piano meno la loro quota
+     di sforamento, più l'avanzo se non ancora iniziati. Nessun pavimento,
+     per ora -- può risultare sotto lo speso, ed è proprio il caso che il
+     giro seguente deve correggere senza far sparire credito nel vuoto. */
+  var raw = {};
+  aperti.forEach(function (k) {
+    var quotaSforo = pesiAperti > 0 ? sovrasforo * S.plan[k] / pesiAperti : 0;
+    var quotaAvanzo = (presi[k] === 0 && pesiFuturi > 0)
+      ? avanzoLibero * S.plan[k] / pesiFuturi : 0;
+    raw[k] = pianoTot[k] - quotaSforo + quotaAvanzo;
+  });
+
+  /* Nessun reparto può mostrare meno di quanto ci hai già speso -- sarebbe
+     un budget negativo, incomprensibile a schermo. Dove il valore grezzo
+     scende sotto lo speso, lo fisso lì e sposto il deficit sugli altri
+     reparti ancora liberi, in proporzione al loro peso di piano. Fissando
+     il peggiore un giro alla volta (non tutti insieme) la somma resta
+     sempre esatta: senza questo passaggio, il credito che un reparto non
+     può "restituire" perché è già al minimo spariva senza essere tolto a
+     nessun altro, ed è la causa della somma che cresceva senza controllo. */
+  var fissato = {}, liberi = aperti.slice();
+  for (var giro = 0; giro <= aperti.length; giro++) {
+    var peggioreK = null, peggioreDeficit = 0;
+    liberi.forEach(function (k) {
+      var deficit = speso[k] - raw[k];
+      if (deficit > peggioreDeficit) { peggioreDeficit = deficit; peggioreK = k; }
+    });
+    if (!peggioreK) break;
+    fissato[peggioreK] = speso[peggioreK];
+    liberi = liberi.filter(function (k) { return k !== peggioreK; });
+    var pesiRimasti = liberi.reduce(function (a, k) { return a + S.plan[k]; }, 0);
+    liberi.forEach(function (k) {
+      raw[k] -= pesiRimasti > 0 ? peggioreDeficit * S.plan[k] / pesiRimasti : 0;
+    });
+  }
+  aperti.forEach(function (k) {
+    S.budgets[k] = fissato[k] !== undefined ? fissato[k] : Math.round(raw[k]);
   });
 }
 
