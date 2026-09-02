@@ -202,6 +202,12 @@ header{position:sticky;top:0;z-index:30;background:rgba(8,11,15,.94);
 .rhead input{width:62px;background:var(--sunk);border:1px solid var(--line2);border-radius:5px;
   padding:3px 6px;text-align:right;font-family:var(--mono);font-size:16px}
 .bar{height:7px;background:var(--sunk);border-radius:4px;overflow:hidden;margin-bottom:10px}
+.piano{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:9px}
+.tcell{background:var(--sunk);border-radius:7px;padding:6px 3px;text-align:center}
+.tcell.off{opacity:.4}
+.tcell b{display:block;font-family:var(--mono);font-size:14px;line-height:1.2}
+.tcell span{display:block;font-size:9.5px;color:var(--dim2);margin-top:1px}
+
 .bar i{display:block;height:100%}
 .ln{display:flex;align-items:center;gap:9px;padding:7px 0;border-top:1px solid var(--line);font-size:14.5px}
 .ln .g{flex:1;min-width:0}
@@ -803,6 +809,49 @@ function urg(a, need) {
 function modLbl(a) { return a >= 7 ? "+5" : a >= 6.75 ? "+4" : a >= 6.5 ? "+3"
                           : a >= 6.25 ? "+2" : a >= 6 ? "+1" : "0"; }
 /* griglia: quante giornate resti senza un portiere in casa */
+/* Fascia di prezzo di un giocatore, dallo stesso FVM su cui si basa "Chi
+   resta": un'unica definizione, così le due schede non possono mai
+   disallinearsi fra loro. */
+function tierOf(f) { return f >= 80 ? "Top" : f >= 35 ? "Semi-top" : f >= 15 ? "Titolari" : "Scommesse"; }
+
+/* Uno schema di riferimento, non una regola: quante presenze di ciascuna
+   fascia conviene avere per reparto, in proporzione agli slot disponibili.
+   Ordine: Top, Semi-top, Titolari, Scommesse. Sono percentuali indicative
+   -- il portiere non ha una vera fascia "Top" conveniente, come emerso
+   dai prezzi reali della tua lega, quindi lì è a zero di proposito. */
+var TIER_TARGET = { P: [0, .40, .40, .20], D: [.05, .25, .55, .15],
+                     C: [.15, .25, .45, .15], A: [.20, .30, .35, .15] };
+var TIER_NOMI = ["Top", "Semi-top", "Titolari", "Scommesse"];
+
+/* Arrotondo le proporzioni a interi che sommano SEMPRE esattamente agli
+   slot del reparto (metodo del resto più grande): arrotondando ciascuna
+   fascia per conto suo il totale potrebbe sforare o mancare di un'unità,
+   il che sembrerebbe un errore di calcolo invece che un arrotondamento. */
+function tierTargetInt(ruolo) {
+  var slot = S.cfg.sl[ruolo], quote = TIER_TARGET[ruolo].map(function (q) { return q * slot; });
+  var interi = quote.map(Math.floor), resto = slot - interi.reduce(function (a, b) { return a + b; }, 0);
+  var ordine = quote.map(function (q, i) { return { i: i, frac: q - Math.floor(q) }; })
+    .sort(function (a, b) { return b.frac - a.frac; });
+  for (var k = 0; k < resto; k++) interi[ordine[k].i]++;
+  return interi;
+}
+
+/* Cosa hai già preso in quel reparto, fascia per fascia, e quale fascia
+   manca ancora rispetto allo schema -- la prima, in ordine di priorità,
+   dove sei sotto l'obiettivo. */
+function pianoReparto(ruolo) {
+  var target = tierTargetInt(ruolo), presi = [0, 0, 0, 0];
+  Object.keys(S.market).forEach(function (id) {
+    if (S.market[id].o !== "me") return;
+    var p = BY_ID[id];
+    if (!p || p.r !== ruolo) return;
+    presi[TIER_NOMI.indexOf(tierOf(p.f))]++;
+  });
+  var prossima = null;
+  for (var i = 0; i < 4; i++) if (target[i] > 0 && presi[i] < target[i]) { prossima = TIER_NOMI[i]; break; }
+  return { target: target, presi: presi, prossima: prossima };
+}
+
 /* Fantamedia attesa per il calcolo di convenienza: se FantaLab non la
    fornisce direttamente, la stimo dalla media voto con lo stesso margine
    che il resto dell'app usa per i bonus medi -- non lascio un buco. */
@@ -1370,7 +1419,8 @@ function vRosa(d) {
       '<span style="color:var(--dim2);font-size:13px">' + R2.L.length + "/" + S.cfg.sl[r.k] +
       "</span></div></div>" +
       '<div class="bar"><i style="width:' + pct(R2.spent, S.budgets[r.k] || 1) +
-      "%;background:" + (over ? "var(--bad)" : "var(--" + r.k + ")") + '"></i></div>';
+      "%;background:" + (over ? "var(--bad)" : "var(--" + r.k + ")") + '"></i></div>' +
+      pianoBadge(r.k);
     R2.L.forEach(function (p) {
       h += '<div class="ln"><span class="g">' + esc(p.n) +
         ' <span style="color:var(--dim2)">· ' + esc(p.t) + "</span>" +
@@ -1387,6 +1437,33 @@ function vRosa(d) {
 }
 
 /* Cosa manca per salire di uno scalino: la domanda che il pannello non sapeva rispondere */
+/* Il pannello che mostra, reparto per reparto, quante presenze di ciascuna
+   fascia hai già e quale manca ancora secondo lo schema di riferimento.
+   Non blocca niente: è un promemoria, non una regola -- se decidi di
+   prendere due Top nello stesso reparto va benissimo lo stesso. */
+function pianoBadge(ruolo) {
+  var pi = pianoReparto(ruolo);
+  var celle = TIER_NOMI.map(function (t, i) {
+    /* "Raggiunto esattamente" e "superato" sono due situazioni diverse:
+       il primo è il traguardo, il secondo va segnalato ma non allarma --
+       senza questa distinzione un 2/1 sembrava un traguardo raggiunto
+       invece che una quota sforata. */
+    var colore = pi.target[i] <= 0 ? "var(--dim2)"
+      : pi.presi[i] > pi.target[i] ? "var(--key)"
+      : pi.presi[i] === pi.target[i] ? "var(--ok)" : "var(--txt)";
+    return '<div class="tcell' + (pi.target[i] <= 0 ? " off" : "") + '">' +
+      '<b style="color:' + colore + '">' + pi.presi[i] + "/" + pi.target[i] + "</b><span>" + t + "</span></div>";
+  }).join("");
+  var rig = PLAYERS.filter(function (p) {
+    return S.market[p.id] && S.market[p.id].o === "me" && p.r === ruolo && p.sp.indexOf("R") >= 0; }).length;
+  return '<div class="piano">' + celle + "</div>" +
+    (pi.prossima
+      ? '<p class="tiny" style="margin:6px 0 0">Prossima presa consigliata: <b style="color:var(--key)">' +
+        pi.prossima + "</b>" + (rig ? "" : ' · <span style="color:var(--dim2)">nessun rigorista qui</span>') + "</p>"
+      : '<p class="tiny" style="margin:6px 0 0">Schema completo per questo reparto' +
+        (rig ? "" : ' · <span style="color:var(--dim2)">nessun rigorista qui</span>') + "</p>");
+}
+
 function modHint(d) {
   var m = d.mod, TH = [6, 6.25, 6.5, 6.75, 7];
   var next = null;
@@ -1673,10 +1750,8 @@ function vLista(d) {
   ROLES.forEach(function (r) {
     var av = PLAYERS.filter(function (p) { return p.r === r.k && !S.market[p.id] && !p.sold; })
       .sort(function (a, b) { return b.f - a.f; });
-    var B = [["Top", av.filter(function (p) { return p.f >= 80; })],
-             ["Semi-top", av.filter(function (p) { return p.f >= 35 && p.f < 80; })],
-             ["Titolari", av.filter(function (p) { return p.f >= 15 && p.f < 35; })],
-             ["Scommesse", av.filter(function (p) { return p.f < 15; })]];
+    var B = TIER_NOMI.map(function (t) {
+      return [t, av.filter(function (p) { return tierOf(p.f) === t; })]; });
     h += '<div class="card"><div class="rhead"><div class="lft">' +
       '<span class="badge b-' + r.k + '">' + r.k + '</span><h3 style=margin:0>' + r.l + "</h3></div>" +
       '<span class="cap">ti mancano ' + d.per[r.k].need + " slot</span></div>";
